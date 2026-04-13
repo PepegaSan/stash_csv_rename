@@ -24,6 +24,7 @@
 [CmdletBinding()]
 param(
     [string] $StashUrl = "http://127.0.0.1:9999",
+ [string] $GraphqlPath = "/graphql",
     [string] $ApiKey = $env:STASH_API_KEY,
     [string] $OutFile = "stash_files_export.csv",
     [int] $PerPage = 500,
@@ -210,7 +211,10 @@ function Test-StashFileRowFilter {
 
 $normPrefix = if ([string]::IsNullOrWhiteSpace($PathPrefix)) { '' } else { (Normalize-StashFilePathForWindows $PathPrefix).TrimEnd('\') + '\' }
 
-$uri = ($StashUrl.TrimEnd("/")) + "/graphql"
+$gp = $GraphqlPath.Trim()
+if ([string]::IsNullOrWhiteSpace($gp)) { $gp = "/graphql" }
+if (-not $gp.StartsWith("/")) { $gp = "/" + $gp }
+$uri = ($StashUrl.TrimEnd("/")) + $gp
 $headers = @{ "Content-Type" = "application/json" }
 if (-not [string]::IsNullOrWhiteSpace($ApiKey)) {
     $headers["ApiKey"] = $ApiKey

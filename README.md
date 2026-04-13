@@ -13,7 +13,8 @@ Small helper: export file paths from **[Stash](https://github.com/stashapp/stash
 - Launch: **`start_file_tools.bat`** or `python gui_file_tools.py`
 
 **Tab 2:** Scan a folder on disk (no Stash), same CSV shape.  
-**Tab 3:** Load CSV, filter, adjust names, optional dry run, then rename.
+**Tab 3:** Load CSV, filter, adjust names, optional dry run, then rename.  
+**Tab 4:** Move currently filtered/selected rows into one target folder (optional subfolder) and run Stash `sceneUpdate` for each moved file (optional rollback if API update fails). You can load the CSV and preview source → destination paths here; filtering is shared with Tab 3.
 
 CSV is **UTF-8 with BOM** (Excel-friendly, accents preserved).
 

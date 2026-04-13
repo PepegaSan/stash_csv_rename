@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+ENV/
+
+# Local app state (paths, API key, UI language — do not publish)
+gui_file_tools_settings.json
+
+# Generated CSVs / exports (your media paths)
+file_tools_csv/
+
+# Tooling / IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Cursor / local AI (optional)
+.cursor/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs / temp
+*.log
+*.tmp
+*.bak
+
+# PyInstaller / packaging (if you add later)
+*.spec.bak
