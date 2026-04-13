@@ -1,5 +1,7 @@
 # Stash — file list & batch rename
 
+> **Status: work in progress** — Stash export, move, and path-update flows are not fully tested end-to-end yet. Use at your own risk; feedback is welcome. This is **not** a stable or “production-ready” release.
+
 Small helper: export file paths from **[Stash](https://github.com/stashapp/stash)** or scan a folder, set new names in a CSV or in the GUI, then rename files on disk.
 
 **Tab 1** talks to your running Stash instance (same idea as the Stash web UI via the API): it fetches a list of file paths linked to scenes through GraphQL and saves them as CSV. For Stash itself, login, API key, and setup, see the [Stash documentation](https://docs.stashapp.cc) and the [Stash repository](https://github.com/stashapp/stash).
