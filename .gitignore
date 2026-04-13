@@ -17,6 +17,9 @@ ENV/
 # Local app state (paths, API key, UI language — do not publish)
 gui_file_tools_settings.json
 
+# Tab 5 rename presets (your tag text / patterns — do not publish)
+schema_rename_presets.json
+
 # Generated CSVs / exports (your media paths)
 file_tools_csv/
 

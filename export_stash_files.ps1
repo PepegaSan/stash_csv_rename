@@ -220,6 +220,21 @@ if (-not [string]::IsNullOrWhiteSpace($ApiKey)) {
     $headers["ApiKey"] = $ApiKey
 }
 
+# GraphQL JSON: property casing can vary by PowerShell / deserializer — resolve case-insensitively.
+function Get-StashJsonProp {
+    param(
+        [Parameter(Mandatory = $true)]$Object,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+    if ($null -eq $Object) { return $null }
+    $exact = $Object.PSObject.Properties[$Name]
+    if ($exact) { return $exact.Value }
+    foreach ($p in $Object.PSObject.Properties) {
+        if ($p.Name -ieq $Name) { return $p.Value }
+    }
+    return $null
+}
+
 $gql = @'
 query ExportSceneFiles($filter: FindFilterType) {
   findScenes(filter: $filter) {
@@ -227,6 +242,11 @@ query ExportSceneFiles($filter: FindFilterType) {
     scenes {
       id
       title
+      code
+      date
+      rating100
+      tags { name }
+      scene_markers { title }
       files { path }
     }
   }
@@ -256,16 +276,18 @@ do {
         Write-Error "GraphQL: $msg"
     }
 
-    $chunk = $resp.data.findScenes
-    if ($null -eq $totalCount) { $totalCount = $chunk.count }
-    $scenes = $chunk.scenes
+    $data = Get-StashJsonProp $resp 'data'
+    $chunk = Get-StashJsonProp $data 'findScenes'
+    if ($null -eq $totalCount) { $totalCount = (Get-StashJsonProp $chunk 'count') }
+    $scenes = Get-StashJsonProp $chunk 'scenes'
     if ($null -eq $scenes) { $scenes = @() }
     else { $scenes = @($scenes) }
 
     foreach ($sc in $scenes) {
-        $files = @($sc.files)
+        $files = @(Get-StashJsonProp $sc 'files')
         if ($files.Count -eq 0) { continue }
-        $rawPath = [string]$files[0].path
+        $f0 = $files[0]
+        $rawPath = [string](Get-StashJsonProp $f0 'path')
         if ([string]::IsNullOrWhiteSpace($rawPath)) { continue }
         $fp = Normalize-StashFilePathForWindows $rawPath
         $leaf = [System.IO.Path]::GetFileName($fp)
@@ -278,13 +300,50 @@ do {
         if ($seenPaths.Contains($key)) { continue }
         [void]$seenPaths.Add($key)
 
+        $sd = Get-StashJsonProp $sc 'date'
+        if ($null -eq $sd) { $sd = '' } else { $sd = [string]$sd }
+        $sr = Get-StashJsonProp $sc 'rating100'
+        if ($null -eq $sr) { $sr = '' } else { $sr = [string]$sr }
+        $st = Get-StashJsonProp $sc 'title'
+        $code = Get-StashJsonProp $sc 'code'
+        $tStr = if ($null -eq $st) { '' } else { [string]$st }
+        $cStr = if ($null -eq $code) { '' } else { [string]$code }
+        $sceneTitle = if (-not [string]::IsNullOrWhiteSpace($tStr.Trim())) { $tStr.Trim() }
+        elseif (-not [string]::IsNullOrWhiteSpace($cStr.Trim())) { $cStr.Trim() }
+        else { '' }
+        $sid = Get-StashJsonProp $sc 'id'
+        if ($null -eq $sid) { $sid = '' } else { $sid = [string]$sid }
+
+        $tagNames = New-Object System.Collections.Generic.List[string]
+        foreach ($tg in @(Get-StashJsonProp $sc 'tags')) {
+            $tn = Get-StashJsonProp $tg 'name'
+            if (-not [string]::IsNullOrWhiteSpace([string]$tn)) {
+                [void]$tagNames.Add(([string]$tn).Trim())
+            }
+        }
+        $tagNames = @($tagNames | Sort-Object -Unique)
+        $sceneTags = ($tagNames -join '; ')
+
+        $markerTitles = New-Object System.Collections.Generic.List[string]
+        foreach ($mk in @(Get-StashJsonProp $sc 'scene_markers')) {
+            $mt = Get-StashJsonProp $mk 'title'
+            if (-not [string]::IsNullOrWhiteSpace([string]$mt)) {
+                [void]$markerTitles.Add(([string]$mt).Trim())
+            }
+        }
+        $sceneMarkers = ($markerTitles -join '; ')
+
         $rows.Add([PSCustomObject][ordered]@{
-            scene_id    = $sc.id
-            scene_title = [string]$sc.title
+            scene_id    = $sid
+            scene_title = $sceneTitle
             file_path   = $fp
             file_directory = if ($dir) { $dir } else { '' }
             file_name   = $leaf
             new_leaf    = ''
+            scene_date  = $sd
+            scene_rating = $sr
+            scene_tags  = $sceneTags
+            scene_markers = $sceneMarkers
         })
     }
 
@@ -317,7 +376,7 @@ if ($dirOut -and -not (Test-Path -LiteralPath $dirOut)) {
     New-Item -ItemType Directory -Path $dirOut -Force | Out-Null
 }
 
-$colNames = @('scene_id', 'scene_title', 'file_path', 'file_directory', 'file_name', 'new_leaf')
+$colNames = @('scene_id', 'scene_title', 'file_path', 'file_directory', 'file_name', 'new_leaf', 'scene_date', 'scene_rating', 'scene_tags', 'scene_markers')
 $outLines = New-Object System.Collections.Generic.List[string]
 $outLines.Add(($colNames -join $Delimiter))
 foreach ($r in $rows) {

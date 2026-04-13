@@ -42,10 +42,25 @@ row("common.csv_file", "CSV file", "CSV-Datei", "Archivo CSV", "Fichier CSV")
 row("common.search", "Search", "Suche", "Buscar", "Recherche")
 row(
     "common.search_syntax_hint",
-    "Syntax: name: / path: / new: = only that column · ; = and · > or § or | or OR = or · \"phrase\" = exact text",
-    "Kurz: name: / path: / new: = nur diese Spalte · ; = und · > (oft Umschalt+.) oder § (Umschalt+3) oder | oder OR = oder · \"Text\" = genauer Suchtext",
-    "Resumen: name: / path: / new: = solo esa columna · ; = y · > o § o | o OR = alternativas · \"texto\" = texto exacto",
-    "Syntaxe : name: / path: / new: = cette colonne seulement · ; = et · > ou § ou | ou OR = ou · « phrase » = texte exact",
+    "Syntax: name: / path: / new: / title: / tags: / markers: = only that column (new: = CSV “new name”, often empty until filled; title: uses scene title or file stem if title empty) · ; = and · > § | OR = or · \"phrase\" = exact",
+    "Kurz: name: / path: / new: / title: / tags: / markers: = nur diese Spalte (new: = CSV-Spalte „Neuer Name“, oft leer bis Füllen; title: = Szenentitel oder Dateiname ohne Endung wenn Titel leer) · ; = und · > § | OR = oder · \"Text\" = genau",
+    "Resumen: name: / path: / new: / title: / tags: / markers: = solo esa columna (new: = «nuevo nombre» del CSV, vacío hasta rellenar; title: = título o nombre de archivo sin extensión si título vacío) · ; = y · > § | OR = o · \"texto\" = exacto",
+    "Syntaxe : name: / path: / new: / title: / tags: / markers: = cette colonne (new: = colonne « nouveau nom », souvent vide ; title: = titre scène ou nom de fichier sans extension si titre vide) · ; = et · > § | OR = ou · « phrase » = exact",
+)
+row("common.exclude_filter", "Exclude (hide rows)", "Ausschluss (Zeilen ausblenden)", "Excluir (ocultar filas)", "Exclure (masquer lignes)")
+row(
+    "common.exclude_placeholder",
+    "e.g. tags:Stash; path:temp",
+    "z. B. tags:Stash; path:temp",
+    "p. ej. tags:Stash; path:temp",
+    "ex. tags:Stash; path:temp",
+)
+row(
+    "common.exclude_syntax_hint",
+    "Exclude uses the same syntax as search. Any row that matches the exclude box is hidden (after applying search). Leave empty to show all matches.",
+    "Ausschluss nutzt dieselbe Syntax wie die Suche. Jede Zeile, die hier passt, wird ausgeblendet (nach der Suche). Leer lassen = alle Suchtreffer zeigen.",
+    "La exclusión usa la misma sintaxis. Las filas que coincidan se ocultan (después del filtro de búsqueda). Vacío = mostrar todos los resultados de búsqueda.",
+    "L’exclusion utilise la même syntaxe. Les lignes qui correspondent sont masquées (après la recherche). Vide = afficher tous les résultats de la recherche.",
 )
 row("common.stash_url", "Stash URL", "Stash-URL", "URL de Stash", "URL Stash")
 row("common.api_key", "API key (if login enabled)", "API-Schlüssel (falls Login aktiv)", "Clave API (si hay inicio de sesión)", "Clé API (si connexion activée)")
@@ -59,7 +74,8 @@ row("common.new_name", "New name", "Neuer Name", "Nombre nuevo", "Nouveau nom")
 row("tab.1", "1 · Stash file CSV", "1 · Stash-Datei-CSV", "1 · CSV de archivos Stash", "1 · CSV fichiers Stash")
 row("tab.2", "2 · Disk scan", "2 · Datenträger-Scan", "2 · Escaneo de disco", "2 · Analyse disque")
 row("tab.3", "3 · Rename", "3 · Umbenennen", "3 · Renombrar", "3 · Renommer")
-row("tab.4", "4 · Move + Stash update", "4 · Verschieben + Stash-Update", "4 · Mover + actualizar Stash", "4 · Déplacer + MAJ Stash")
+row("tab.4", "4 · Move on disk", "4 · Auf Festplatte verschieben", "4 · Mover en disco", "4 · Déplacer sur disque")
+row("tab.5", "5 · Schema names", "5 · Schema-Namen", "5 · Nombres (esquema)", "5 · Noms (schéma)")
 
 # Tab 1
 row(
@@ -312,6 +328,83 @@ row(
 )
 row("t4.refresh_preview", "Refresh preview", "Vorschau aktualisieren", "Actualizar vista previa", "Actualiser l’aperçu")
 
+# Tab 5 — schema-based file names (resolution via ffprobe)
+row(
+    "t5.intro",
+    "Proposed file names use the scene title (truncated); if the title is empty, the current file name is used — not Stash tags/markers. Tags and markers are still exported in the CSV and shown in the list for search (tags: / markers:). Optional year/rating, five custom tag slots, optional ffprobe. Pattern: ShortTitle (YYYY) - [custom] … [1080p] [rating].ext — then fill “new file name” and rename like Tab 3.",
+    "Vorschlagsnamen nutzen den Szenentitel (gekürzt); ist der leer, den aktuellen Dateinamen — nicht die Stash-Tags/Marker. Tags/Marker stehen trotzdem in der CSV und in der Liste (Suche: tags: / markers:). Optional Jahr/Bewertung, fünf freie Tags, ffprobe.",
+    "El nombre propuesto usa el título de escena; si falta, el nombre de archivo — no las etiquetas ni marcadores de Stash (siguen en CSV y lista; búsqueda tags: / markers:).",
+    "Le nom proposé utilise le titre de scène ; sinon le nom de fichier — pas les tags/marqueurs Stash (toujours dans le CSV et la liste ; recherche tags: / markers:).",
+)
+row(
+    "t5.hint_ffprobe",
+    "ffprobe: {exe} — after loading the CSV click «ffprobe start» (same row as the resolution options) so [1080p] etc. are filled (FFmpeg must be in PATH).",
+    "ffprobe: {exe} — nach dem CSV-Laden «ffprobe start» klicken (eine Zeile mit der Auflösungs-Anzeige), damit [1080p] usw. gefüllt werden (FFmpeg im PATH).",
+    "ffprobe: {exe} — tras cargar el CSV pulse «ffprobe start» (misma fila que la resolución) para rellenar [1080p] etc. (FFmpeg en PATH).",
+    "ffprobe : {exe} — après le CSV, cliquez sur « ffprobe start » (même ligne que la résolution) pour remplir [1080p] etc. (FFmpeg dans le PATH).",
+)
+row(
+    "t5.hint_csv_meta",
+    "Re-export from Tab 1 / export_stash_files.ps1 for scene_date, scene_rating, scene_tags (all tag names), and scene_markers (marker titles). The year in “(YYYY)” uses scene_date when that cell has a usable year; otherwise it uses the file’s creation time on Windows, birth time on macOS when available, otherwise last modification (Linux often has no true creation time). Without title/tags/marker columns, Tab 5 falls back to the file name where needed.",
+    "Neu exportieren (Tab 1 / .ps1) für scene_date, scene_rating, scene_tags und scene_markers. Das Jahr in „(JJJJ)“ nutzt scene_date, wenn daraus ein Jahr lesbar ist — sonst unter Windows das Erstellungsdatum der Datei, unter macOS den Geburtszeitstempel (birth time) falls vorhanden, sonst die letzte Änderung (unter Linux oft kein echtes Erstellungsdatum). Ohne Titel/Tags/Marker nutzt Tab 5 den Dateinamen.",
+    "Reexporte (tab 1 / .ps1) para scene_date, scene_rating, scene_tags y scene_markers. El año «(AAAA)» usa scene_date si hay año válido; si no, creación en Windows, birth time en macOS si existe, si no modificación (Linux a menudo sin creación real). Sin título/tags/marcadores, Tab 5 usa el nombre de archivo.",
+    "Réexportez (onglet 1 / .ps1) pour scene_date, scene_rating, scene_tags et scene_markers. L’année « (AAAA) » utilise scene_date si une année est lisible ; sinon création sous Windows, « birth time » sous macOS si dispo, sinon dernière modification (souvent pas de vraie création sous Linux). Sans titre/tags/marqueurs, Tab 5 retombe sur le nom de fichier.",
+)
+row("t5.title_max", "Title max length", "Titel max. Länge", "Título máx.", "Titre max.")
+row(
+    "t5.include_year",
+    "Year (YYYY) from CSV or file (creation if available)",
+    "Jahr (JJJJ) aus CSV oder Datei (Erstellung wo verfügbar)",
+    "Año (AAAA) desde CSV o archivo (creación si existe)",
+    "Année (AAAA) depuis CSV ou fichier (création si dispo)",
+)
+row("t5.include_resolution", "Resolution (ffprobe)", "Auflösung (ffprobe)", "Resolución (ffprobe)", "Résolution (ffprobe)")
+row("t5.include_rating", "Rating from CSV", "Bewertung aus CSV", "Valoración desde CSV", "Note depuis CSV")
+row("t5.resolution_mode", "Resolution label", "Auflösungs-Anzeige", "Etiqueta de resolución", "Libellé résolution")
+row("t5.res_heightp", "Height tier (e.g. 1080p)", "Höhenstufe (z. B. 1080p)", "Por altura (p. ej. 1080p)", "Par hauteur (ex. 1080p)")
+row("t5.res_wxh", "Width × height", "Breite × Höhe", "Ancho × alto", "Largeur × hauteur")
+row("t5.tag_slot", "Tag {n}", "Tag {n}", "Etiqueta {n}", "Étiquette {n}")
+row("t5.tag_placeholder", "word if checked", "Wort wenn aktiv", "texto si marcado", "mot si coché")
+row(
+    "t5.tag_structure_hint",
+    "Optional layout idea — e.g. slot 1=[Action], 2=[Place], 3=[Time]; slots 4–5 for extras (studio, niche, …). Only checked slots appear; order in the file name is slot 1→5, then resolution and rating.",
+    "Optional: klare Struktur — z. B. Slot 1=[Action], 2=[Place], 3=[Time]; Slot 4–5 für Extras (Studio, Nische …). Nur angehakte Slots; Reihenfolge im Namen: Slot 1→5, danach Auflösung und Bewertung.",
+    "Idea opcional: ranura 1=[Action], 2=[Place], 3=[Time]; 4–5 extras. Solo ranuras marcadas; en el nombre: 1→5, luego resolución y valoración.",
+    "Option : structure claire — ex. emplacement 1=[Action], 2=[Place], 3=[Time] ; 4–5 en plus. Seules les cases cochées ; ordre dans le nom : 1→5, puis résolution et note.",
+)
+row("t5.col.scene_title", "Scene title", "Szenentitel", "Título escena", "Titre scène")
+row("t5.col.scene_date", "Date (CSV)", "Datum (CSV)", "Fecha (CSV)", "Date (CSV)")
+row("t5.col.scene_tags", "Stash tags", "Stash-Tags", "Etiquetas Stash", "Tags Stash")
+row("t5.col.scene_markers", "Markers", "Marker", "Marcadores", "Marqueurs")
+row("t5.col.proposed", "Proposed name", "Vorschlagsname", "Nombre propuesto", "Nom proposé")
+row("t5.refresh_probe", "ffprobe start", "ffprobe start", "ffprobe start", "ffprobe start")
+row(
+    "t5.fill_new_leaf",
+    "Fill “new file name” from schema",
+    "„Neuer Dateiname“ aus Schema füllen",
+    "Rellenar «nuevo nombre» según esquema",
+    "Remplir « nouveau nom » (schéma)",
+)
+row(
+    "t5.selected_only",
+    "Selected rows only — Fill and Rename apply to the highlighted rows",
+    "Nur markierte Zeilen — Füllen und Umbenennen nur für die markierten Einträge",
+    "Solo filas seleccionadas — rellenar y renombrar solo las filas resaltadas",
+    "Uniquement les lignes sélectionnées — remplir et renommer les lignes surlignées",
+)
+row(
+    "t5.selection_hint",
+    "Selection: Ctrl or Shift+click, or click and drag across rows (same on Tab 3 & 4).",
+    "Auswahl: Strg- oder Umschalt+Klick, oder mit gedrückter Maustaste über Zeilen ziehen (ebenso Tab 3 & 4).",
+    "Selección: Ctrl o Mayús+clic, o arrastrar (igual en pestañas 3 y 4).",
+    "Sélection : Ctrl ou Maj+clic, ou glisser sur les lignes (idem onglets 3 et 4).",
+)
+row("t5.preset_label", "Preset", "Voreinstellung", "Preajuste", "Préréglage")
+row("t5.preset_none", "—", "—", "—", "—")
+row("t5.preset_name_ph", "new preset name", "Name für Voreinstellung", "nombre del preajuste", "nom du préréglage")
+row("t5.preset_save", "Save preset", "Voreinstellung speichern", "Guardar preajuste", "Enregistrer préréglage")
+row("t5.preset_delete", "Delete preset", "Voreinstellung löschen", "Borrar preajuste", "Supprimer préréglage")
+
 # Settings
 row("settings.title", "Settings", "Einstellungen", "Ajustes", "Réglages")
 row(
@@ -385,6 +478,13 @@ row("log.t1_export_header", "\n--- Tab 1: Stash file export ---\n", "\n--- Tab 1
 row("log.powershell_fail", "Failed to start PowerShell: {e}\n", "PowerShell konnte nicht gestartet werden: {e}\n", "No se pudo iniciar PowerShell: {e}\n", "Échec du démarrage de PowerShell : {e}\n")
 row("log.exit_code", "\nExit code: {code}\n", "\nExit-Code: {code}\n", "\nCódigo de salida: {code}\n", "\nCode de sortie : {code}\n")
 row("log.tip_tab3_csv", "Tip: switched Tab 3 CSV path to: {path}\n", "Hinweis: Tab-3-CSV-Pfad gesetzt auf: {path}\n", "Aviso: ruta CSV pestaña 3: {path}\n", "Astuce : chemin CSV onglet 3 : {path}\n")
+row(
+    "log.tip_shared_csv_tabs",
+    "Tip: Tab 4 and Tab 5 CSV path set to the same file — click Load on those tabs (or reload) so title/date columns appear.\n",
+    "Hinweis: Tab 4 und 5 zeigen dieselbe CSV-Datei — dort „Laden“ klicken (oder neu laden), damit Titel/Datum-Spalten erscheinen.\n",
+    "Aviso: pestañas 4 y 5 usan el mismo CSV — pulse Cargar (o recargue) para ver título/fecha.\n",
+    "Astuce : onglets 4 et 5 pointent sur le même CSV — cliquez Charger (ou rechargez) pour titre/date.\n",
+)
 row("log.t2_pick_folder", "Tab 2: choose a folder to scan.\n", "Tab 2: Ordner zum Scannen wählen.\n", "Tab 2: elija carpeta para escanear.\n", "Tab 2 : choisissez un dossier à analyser.\n")
 row("log.not_directory", "Not a directory: {root}\n", "Kein Ordner: {root}\n", "No es un directorio: {root}\n", "Ce n’est pas un dossier : {root}\n")
 row("log.t2_scanning", "\n--- Tab 2: scanning {root} (include subfolders={sub}) ---\n", "\n--- Tab 2: Scan {root} (Unterordner={sub}) ---\n", "\n--- Tab 2: escaneando {root} (subcarpetas={sub}) ---\n", "\n--- Tab 2 : analyse {root} (sous-dossiers={sub}) ---\n")
@@ -613,6 +713,87 @@ row(
     "\n{preview}Verarbeitet: verschoben {moved}, übersprungen {skipped}.\n",
     "\n{preview}Procesado: movidos {moved}, omitidos {skipped}.\n",
     "\n{preview}Traité : déplacés {moved}, ignorés {skipped}.\n",
+)
+row("log.t5_need_csv", "Tab 5: set a valid CSV path.\n", "Tab 5: gültigen CSV-Pfad setzen.\n", "Tab 5: ruta CSV válida.\n", "Tab 5 : chemin CSV valide.\n")
+row(
+    "log.t5_loaded",
+    "Tab 5: loaded {n} row(s) from {path} (delimiter {sniff}).\n",
+    "Tab 5: {n} Zeile(n) aus {path} geladen (Trenner {sniff}).\n",
+    "Tab 5: {n} fila(s) desde {path} (delimitador {sniff}).\n",
+    "Tab 5 : {n} ligne(s) depuis {path} (délimiteur {sniff}).\n",
+)
+row(
+    "log.t5_saved",
+    "Tab 5: saved {n} row(s) to {path}\n",
+    "Tab 5: {n} Zeile(n) nach {path} gespeichert\n",
+    "Tab 5: guardadas {n} fila(s) en {path}\n",
+    "Tab 5 : {n} ligne(s) enregistrées dans {path}\n",
+)
+row(
+    "log.t5_no_ffprobe",
+    "Tab 5: ffprobe not found — install FFmpeg and ensure ffprobe is on PATH.\n",
+    "Tab 5: ffprobe nicht gefunden — FFmpeg installieren, ffprobe im PATH.\n",
+    "Tab 5: ffprobe no encontrado — instale FFmpeg y PATH.\n",
+    "Tab 5 : ffprobe introuvable — installez FFmpeg et le PATH.\n",
+)
+row(
+    "log.t5_probed",
+    "Tab 5: ffprobe OK for {ok} of {total} visible row(s); list refreshed.\n",
+    "Tab 5: ffprobe für {ok} von {total} sichtbaren Zeilen OK; Liste aktualisiert.\n",
+    "Tab 5: ffprobe OK en {ok} de {total} filas visibles; lista actualizada.\n",
+    "Tab 5 : ffprobe OK pour {ok} sur {total} lignes visibles ; liste actualisée.\n",
+)
+row(
+    "log.t5_probe_row_fail",
+    "Tab 5 ffprobe skip {path}: {err}\n",
+    "Tab 5 ffprobe überspringe {path}: {err}\n",
+    "Tab 5 ffprobe omitir {path}: {err}\n",
+    "Tab 5 ffprobe ignorer {path} : {err}\n",
+)
+row(
+    "log.t5_fill_done",
+    "Tab 5: filled new_leaf on {n} row(s).\n",
+    "Tab 5: „Neuer Dateiname“ bei {n} Zeile(n) gesetzt.\n",
+    "Tab 5: new_leaf rellenado en {n} fila(s).\n",
+    "Tab 5 : new_leaf rempli pour {n} ligne(s).\n",
+)
+row(
+    "log.t5_rename_need_selection",
+    "Tab 5: select at least one row, or turn off “Selected rows only”.\n",
+    "Tab 5: mindestens eine Zeile markieren oder „Nur markierte Zeilen“ deaktivieren.\n",
+    "Tab 5: elija al menos una fila o desactive «Solo filas seleccionadas».\n",
+    "Tab 5 : sélectionnez au moins une ligne ou désactivez « Uniquement les lignes sélectionnées ».\n",
+)
+row(
+    "log.t5_rename_summary",
+    "Tab 5 rename: done (dry_run={dry}). Renamed: {renamed}, skipped: {skipped}.\n",
+    "Tab 5 Umbenennen: fertig (dry_run={dry}). Umbenannt: {renamed}, übersprungen: {skipped}.\n",
+    "Tab 5 renombrar: hecho (dry_run={dry}). Renombrados: {renamed}, omitidos: {skipped}.\n",
+    "Tab 5 renommage : terminé (dry_run={dry}). Renommés : {renamed}, ignorés : {skipped}.\n",
+)
+row(
+    "log.t5_preset_save_fail",
+    "Tab 5: could not save presets file: {e}\n",
+    "Tab 5: Voreinstellungsdatei nicht speicherbar: {e}\n",
+    "Tab 5: no se pudo guardar preajustes: {e}\n",
+    "Tab 5 : impossible d’enregistrer les préréglages : {e}\n",
+)
+row("log.t5_preset_need_name", "Tab 5: enter a preset name before saving.\n", "Tab 5: Namen für die Voreinstellung eingeben.\n", "Tab 5: nombre del preajuste.\n", "Tab 5 : saisissez un nom de préréglage.\n")
+row("log.t5_preset_bad_name", "Tab 5: that preset name is reserved.\n", "Tab 5: dieser Name ist reserviert.\n", "Tab 5: nombre reservado.\n", "Tab 5 : nom réservé.\n")
+row(
+    "log.t5_preset_saved",
+    "Tab 5: preset “{name}” saved to schema_rename_presets.json\n",
+    "Tab 5: Voreinstellung „{name}“ in schema_rename_presets.json gespeichert\n",
+    "Tab 5: preajuste «{name}» guardado en schema_rename_presets.json\n",
+    "Tab 5 : préréglage « {name} » enregistré dans schema_rename_presets.json\n",
+)
+row("log.t5_preset_none_selected", "Tab 5: select a preset to delete (not “—”).\n", "Tab 5: zu löschende Voreinstellung wählen (nicht „—“).\n", "Tab 5: elija un preajuste para borrar.\n", "Tab 5 : choisissez un préréglage à supprimer.\n")
+row(
+    "log.t5_preset_deleted",
+    "Tab 5: deleted preset “{name}”.\n",
+    "Tab 5: Voreinstellung „{name}“ gelöscht.\n",
+    "Tab 5: preajuste «{name}» borrado.\n",
+    "Tab 5 : préréglage « {name} » supprimé.\n",
 )
 row(
     "log.test_stash",

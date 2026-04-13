@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CustomTkinter: Tab1 Stash CSV, Tab2 disk scan, Tab3 rename, Tab4 move + Stash update."""
+"""CustomTkinter: Tab1 Stash CSV, Tab2 disk scan, Tab3 rename, Tab4 move, Tab5 schema rename."""
 
 from __future__ import annotations
 
@@ -18,10 +18,13 @@ from file_rename_tools import (
     apply_file_renames,
     apply_find_replace_to_rows,
     apply_prefix_suffix_to_rows,
+    build_schema_rename_leaf,
+    ffprobe_video_size,
     filter_stub_for_subfolder_suggest,
+    find_ffprobe_executable,
     move_files_only,
     read_rename_csv,
-    row_matches_search_filter,
+    row_passes_list_filters,
     rename_folder_dangerous,
     resolve_csv_path_to_existing_file,
     resolve_move_destination_root,
@@ -34,8 +37,13 @@ from file_rename_tools import (
 )
 
 _SETTINGS_PATH = Path(__file__).resolve().parent / "gui_file_tools_settings.json"
+_SCHEMA_PRESETS_PATH = Path(__file__).resolve().parent / "schema_rename_presets.json"
 _DEFAULT_STASH_PS1 = Path(__file__).resolve().parent / "export_stash_files.ps1"
 _ROOT = Path(__file__).resolve().parent
+
+# Tk event.state modifier bits (not in tkinter.constants on some Python 3.12 builds).
+_TK_SHIFT_MASK = 0x0001
+_TK_CONTROL_MASK = 0x0004
 
 # Secondary / hint labels: (light appearance, dark appearance). CTk scroll areas use gray in light mode — avoid
 # theme grays like gray25/gray70 here or text disappears on the frame background.
@@ -97,6 +105,7 @@ class FileToolsApp(ctk.CTk):
         # Tab 3
         self._t3_csv = ctk.StringVar(value="")
         self._t3_filter = ctk.StringVar(value="")
+        self._t3_filter_exclude = ctk.StringVar(value="")
         self._t3_only_under = ctk.StringVar(value="")
         self._t3_prefix = ctk.StringVar(value="")
         self._t3_suffix = ctk.StringVar(value="")
@@ -115,6 +124,7 @@ class FileToolsApp(ctk.CTk):
         self._t4_rows: list[dict[str, str]] = []
         self._t4_csv = ctk.StringVar(value=str(_default_file_tools_csv_dir() / "stash_files.csv"))
         self._t4_filter = ctk.StringVar(value="")
+        self._t4_filter_exclude = ctk.StringVar(value="")
         self._t4_target_folder = ctk.StringVar(value="")
         self._t4_dry = ctk.BooleanVar(value=True)
         self._t4_subfolder = ctk.StringVar(value="")
@@ -123,6 +133,27 @@ class FileToolsApp(ctk.CTk):
         self._t4_preview_scheduled = False
         self._t4_after_id: str | None = None
         self._t4_trace_ids: list[tuple[ctk.Variable, str]] = []
+        self._t5_trace_ids: list[tuple[ctk.Variable, str]] = []
+        self._tree_b1_drag_state: dict[int, dict[str, object]] = {}
+
+        # Tab 5 — schema rename (title + year + tags + ffprobe resolution + rating)
+        self._t5_rows: list[dict[str, str]] = []
+        self._t5_csv = ctk.StringVar(value=str(_default_file_tools_csv_dir() / "stash_files.csv"))
+        self._t5_filter = ctk.StringVar(value="")
+        self._t5_filter_exclude = ctk.StringVar(value="")
+        self._t5_title_max = ctk.StringVar(value="15")
+        self._t5_include_year = ctk.BooleanVar(value=True)
+        self._t5_include_resolution = ctk.BooleanVar(value=True)
+        self._t5_include_rating = ctk.BooleanVar(value=True)
+        self._t5_resolution_mode = ctk.StringVar(value="heightp")
+        self._t5_dry = ctk.BooleanVar(value=True)
+        self._t5_use_selected = ctk.BooleanVar(value=False)
+        self._t5_tag_en = [ctk.BooleanVar(value=False) for _ in range(5)]
+        self._t5_tag_txt = [ctk.StringVar(value="") for _ in range(5)]
+        self._t5_preset_name = ctk.StringVar(value="")
+        self._t5_preset_pick = ctk.StringVar(value="\u2014")  # same as t5.preset_none in all locales
+        self._t5_ffprobe_cache: dict[str, tuple[int | None, int | None]] = {}
+        self._t5_preset_menu: ctk.CTkOptionMenu | None = None
 
         self._appearance_mode = ctk.StringVar(value="dark")
         self._ui_language = ctk.StringVar(value="en")
@@ -135,6 +166,7 @@ class FileToolsApp(ctk.CTk):
         self._apply_user_appearance_setting()
         self._apply_ttk_treeview_style()
         self._install_t4_traces()
+        self._install_t5_traces()
         self.after_idle(self._t4_refresh_preview)
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -171,6 +203,7 @@ class FileToolsApp(ctk.CTk):
 
         self._t3_csv = ctk.StringVar(value=self._t3_csv.get())
         self._t3_filter = ctk.StringVar(value=self._t3_filter.get())
+        self._t3_filter_exclude = ctk.StringVar(value=self._t3_filter_exclude.get())
         self._t3_only_under = ctk.StringVar(value=self._t3_only_under.get())
         self._t3_prefix = ctk.StringVar(value=self._t3_prefix.get())
         self._t3_suffix = ctk.StringVar(value=self._t3_suffix.get())
@@ -185,11 +218,27 @@ class FileToolsApp(ctk.CTk):
 
         self._t4_csv = ctk.StringVar(value=self._t4_csv.get())
         self._t4_filter = ctk.StringVar(value=self._t4_filter.get())
+        self._t4_filter_exclude = ctk.StringVar(value=self._t4_filter_exclude.get())
         self._t4_target_folder = ctk.StringVar(value=self._t4_target_folder.get())
         self._t4_subfolder = ctk.StringVar(value=self._t4_subfolder.get())
         self._t4_dry = ctk.BooleanVar(value=self._t4_dry.get())
         self._t4_per_source = ctk.BooleanVar(value=self._t4_per_source.get())
         self._t4_use_selected = ctk.BooleanVar(value=self._t4_use_selected.get())
+
+        self._t5_csv = ctk.StringVar(value=self._t5_csv.get())
+        self._t5_filter = ctk.StringVar(value=self._t5_filter.get())
+        self._t5_filter_exclude = ctk.StringVar(value=self._t5_filter_exclude.get())
+        self._t5_title_max = ctk.StringVar(value=self._t5_title_max.get())
+        self._t5_include_year = ctk.BooleanVar(value=self._t5_include_year.get())
+        self._t5_include_resolution = ctk.BooleanVar(value=self._t5_include_resolution.get())
+        self._t5_include_rating = ctk.BooleanVar(value=self._t5_include_rating.get())
+        self._t5_resolution_mode = ctk.StringVar(value=self._t5_resolution_mode.get())
+        self._t5_dry = ctk.BooleanVar(value=self._t5_dry.get())
+        self._t5_use_selected = ctk.BooleanVar(value=self._t5_use_selected.get())
+        self._t5_tag_en = [ctk.BooleanVar(value=self._t5_tag_en[i].get()) for i in range(5)]
+        self._t5_tag_txt = [ctk.StringVar(value=self._t5_tag_txt[i].get()) for i in range(5)]
+        self._t5_preset_name = ctk.StringVar(value=self._t5_preset_name.get())
+        self._t5_preset_pick = ctk.StringVar(value=self._t5_preset_pick.get())
 
     def _remove_t4_traces(self) -> None:
         for v, tid in self._t4_trace_ids:
@@ -204,6 +253,7 @@ class FileToolsApp(ctk.CTk):
         cb = lambda *_: self._t4_schedule_preview_refresh()
         for v in (
             self._t4_filter,
+            self._t4_filter_exclude,
             self._t4_target_folder,
             self._t4_subfolder,
             self._t4_per_source,
@@ -211,6 +261,30 @@ class FileToolsApp(ctk.CTk):
             self._t4_dry,
         ):
             self._t4_trace_ids.append((v, v.trace_add("write", cb)))
+
+    def _remove_t5_traces(self) -> None:
+        for v, tid in self._t5_trace_ids:
+            try:
+                v.trace_remove("write", tid)
+            except (ValueError, TclError):
+                pass
+        self._t5_trace_ids.clear()
+
+    def _install_t5_traces(self) -> None:
+        """Refresh Tab 5 preview when schema options (tags, title length, …) change."""
+        self._remove_t5_traces()
+        cb = lambda *_: self._t5_rebuild_tree()
+        for i in range(5):
+            self._t5_trace_ids.append((self._t5_tag_en[i], self._t5_tag_en[i].trace_add("write", cb)))
+            self._t5_trace_ids.append((self._t5_tag_txt[i], self._t5_tag_txt[i].trace_add("write", cb)))
+        for v in (
+            self._t5_title_max,
+            self._t5_include_year,
+            self._t5_include_resolution,
+            self._t5_include_rating,
+            self._t5_resolution_mode,
+        ):
+            self._t5_trace_ids.append((v, v.trace_add("write", cb)))
 
     def _cancel_t4_preview_after(self) -> None:
         self._t4_preview_scheduled = False
@@ -224,6 +298,7 @@ class FileToolsApp(ctk.CTk):
 
     def _rebuild_main_ui(self) -> None:
         self._remove_t4_traces()
+        self._remove_t5_traces()
         self._cancel_t4_preview_after()
         try:
             self.update_idletasks()
@@ -242,9 +317,11 @@ class FileToolsApp(ctk.CTk):
         self._apply_user_appearance_setting()
         self._apply_ttk_treeview_style()
         self._install_t4_traces()
+        self._install_t5_traces()
         self._t3_rebuild_tree()
         self._t4_rebuild_tree()
         self._t4_refresh_preview()
+        self._t5_rebuild_tree()
 
     def _apply_user_appearance_setting(self) -> None:
         """Apply dark/light/system from saved settings (do not name this _apply_appearance_mode — CTk uses that)."""
@@ -326,6 +403,64 @@ class FileToolsApp(ctk.CTk):
         tree.bind("<Button-4>", on_linux_up)
         tree.bind("<Button-5>", on_linux_down)
 
+    def _install_tree_drag_range_select(self, tree: ttk.Treeview) -> None:
+        """Click-drag to select a contiguous row block (Ctrl/Shift+click still use default extended mode)."""
+        tid = id(tree)
+
+        def on_press(event: object) -> None:
+            y = getattr(event, "y", 0)
+            row_id = tree.identify_row(y)
+            self._tree_b1_drag_state[tid] = {"anchor": row_id or "", "down": True}
+
+        def on_motion(event: object) -> None:
+            st = self._tree_b1_drag_state.get(tid)
+            if not st or not st.get("down"):
+                return
+            state = int(getattr(event, "state", 0))
+            if (state & _TK_CONTROL_MASK) or (state & _TK_SHIFT_MASK):
+                return
+            anchor = (st.get("anchor") or "").strip()
+            if not anchor:
+                return
+            y = getattr(event, "y", 0)
+            cur = tree.identify_row(y)
+            if not cur:
+                return
+            children = tree.get_children("")
+            try:
+                ia = children.index(anchor)
+                ib = children.index(cur)
+            except ValueError:
+                return
+            lo, hi = min(ia, ib), max(ia, ib)
+            block = children[lo : hi + 1]
+            if not block:
+                return
+            tree.selection_set(block[0])
+            for x in block[1:]:
+                tree.selection_add(x)
+
+        def on_release(_event: object) -> None:
+            st = self._tree_b1_drag_state.get(tid)
+            if st:
+                st["down"] = False
+
+        tree.bind("<ButtonPress-1>", on_press, add="+")
+        tree.bind("<B1-Motion>", on_motion, add="+")
+        tree.bind("<ButtonRelease-1>", on_release, add="+")
+
+    def _ttk_restore_row_selection(self, tree: ttk.Treeview, indices: list[int]) -> None:
+        """Re-apply selection after Treeview rows were deleted/rebuilt (same iids = row indices)."""
+        if not indices:
+            return
+        want = {str(i) for i in indices}
+        have = [c for c in tree.get_children() if c in want]
+        if not have:
+            return
+        tree.selection_set(have[0])
+        for c in have[1:]:
+            tree.selection_add(c)
+
     def _place_ttk_tree_with_scrollbars(self, tree_frame: ctk.CTkFrame, tree: ttk.Treeview) -> None:
         scroll_y = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
         scroll_x = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
@@ -336,6 +471,7 @@ class FileToolsApp(ctk.CTk):
         tree_frame.grid_rowconfigure(0, weight=1)
         tree_frame.grid_columnconfigure(0, weight=1)
         self._bind_ttk_tree_mousewheel(tree)
+        self._install_tree_drag_range_select(tree)
 
     def _log(self, msg: str) -> None:
         self._log_box.configure(state="normal")
@@ -388,11 +524,18 @@ class FileToolsApp(ctk.CTk):
 
         tabs = ctk.CTkTabview(self, fg_color=_UI_SURFACE)
         tabs.pack(fill="both", expand=True, padx=10, pady=(6, 4))
-        tab1, tab2, tab3, tab4 = self._tr("tab.1"), self._tr("tab.2"), self._tr("tab.3"), self._tr("tab.4")
+        tab1, tab2, tab3, tab4, tab5 = (
+            self._tr("tab.1"),
+            self._tr("tab.2"),
+            self._tr("tab.3"),
+            self._tr("tab.4"),
+            self._tr("tab.5"),
+        )
         tabs.add(tab1)
         tabs.add(tab2)
         tabs.add(tab3)
         tabs.add(tab4)
+        tabs.add(tab5)
 
         def _scroll_wrap(tab_label: str) -> ctk.CTkScrollableFrame:
             inner = ctk.CTkScrollableFrame(tabs.tab(tab_label), fg_color=_UI_SURFACE)
@@ -403,6 +546,7 @@ class FileToolsApp(ctk.CTk):
         self._build_tab2(_scroll_wrap(tab2))
         self._build_tab3(_scroll_wrap(tab3))
         self._build_tab4(_scroll_wrap(tab4))
+        self._build_tab5(_scroll_wrap(tab5))
 
         log_f = ctk.CTkFrame(self, fg_color=_UI_SURFACE)
         log_f.pack(fill="both", expand=False, padx=10, pady=(4, 10))
@@ -711,9 +855,29 @@ class FileToolsApp(ctk.CTk):
         ent.pack(side="left", fill="x", expand=True, padx=(0, 8))
         ent.bind("<KeyRelease>", lambda e: self._t3_rebuild_tree())
 
+        ex3 = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        ex3.pack(fill="x", **pad)
+        _label(ex3, text=self._tr("common.exclude_filter"), width=160, anchor="w").pack(side="left")
+        ent_ex3 = ctk.CTkEntry(
+            ex3,
+            textvariable=self._t3_filter_exclude,
+            placeholder_text=self._tr("common.exclude_placeholder"),
+        )
+        ent_ex3.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ent_ex3.bind("<KeyRelease>", lambda e: self._t3_rebuild_tree())
+
         _label(
             parent,
             text=self._tr("common.search_syntax_hint"),
+            anchor="w",
+            justify="left",
+            wraplength=880,
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=11),
+        ).pack(fill="x", padx=10, pady=(0, 2))
+        _label(
+            parent,
+            text=self._tr("common.exclude_syntax_hint"),
             anchor="w",
             justify="left",
             wraplength=880,
@@ -951,9 +1115,32 @@ class FileToolsApp(ctk.CTk):
         ent4.pack(side="left", fill="x", expand=True, padx=(0, 8))
         ent4.bind("<KeyRelease>", lambda e: (self._t4_rebuild_tree(), self._t4_schedule_preview_refresh()))
 
+        ex4 = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        ex4.pack(fill="x", **pad)
+        _label(ex4, text=self._tr("common.exclude_filter"), width=120, anchor="w").pack(side="left")
+        ent_ex4 = ctk.CTkEntry(
+            ex4,
+            textvariable=self._t4_filter_exclude,
+            placeholder_text=self._tr("common.exclude_placeholder"),
+        )
+        ent_ex4.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ent_ex4.bind(
+            "<KeyRelease>",
+            lambda e: (self._t4_rebuild_tree(), self._t4_schedule_preview_refresh()),
+        )
+
         _label(
             parent,
             text=self._tr("common.search_syntax_hint"),
+            anchor="w",
+            justify="left",
+            wraplength=880,
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=11),
+        ).pack(fill="x", padx=10, pady=(0, 2))
+        _label(
+            parent,
+            text=self._tr("common.exclude_syntax_hint"),
             anchor="w",
             justify="left",
             wraplength=880,
@@ -978,6 +1165,18 @@ class FileToolsApp(ctk.CTk):
         self._t4_tree.column("name", width=180, minwidth=80, stretch=False)
         self._t4_tree.column("scene_id", width=120, minwidth=60, stretch=False)
         self._place_ttk_tree_with_scrollbars(tree_frame, self._t4_tree)
+        self._t4_tree.bind("<Button-3>", self._t4_tree_context_menu)
+
+        t4_path_btns = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        t4_path_btns.pack(fill="x", padx=10, pady=(0, 4))
+        _label(t4_path_btns, text=self._tr("t3.selected"), width=90, anchor="w").pack(side="left")
+        ctk.CTkButton(
+            t4_path_btns,
+            text=self._tr("t3.open_explorer"),
+            width=_btn_w(self._tr("t3.open_explorer")),
+            height=_BTN_H,
+            command=self._t4_open_selected_in_explorer,
+        ).pack(side="left")
 
         self._t4_stats = _label(
             parent,
@@ -1096,6 +1295,577 @@ class FileToolsApp(ctk.CTk):
         self._t4_preview.pack(fill="both", expand=False, **pad)
         self._t4_preview.configure(state="disabled")
 
+    def _build_tab5(self, parent: ctk.CTkFrame) -> None:
+        pad = self._pad()
+        _label(
+            parent,
+            text=self._tr("t5.intro"),
+            anchor="w",
+            wraplength=860,
+            justify="left",
+        ).pack(fill="x", **pad)
+        fp_exe = find_ffprobe_executable() or ""
+        _label(
+            parent,
+            text=self._tr("t5.hint_ffprobe", exe=fp_exe or "—"),
+            anchor="w",
+            wraplength=860,
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=12),
+        ).pack(fill="x", padx=10, pady=(0, 2))
+        _label(
+            parent,
+            text=self._tr("t5.hint_csv_meta"),
+            anchor="w",
+            wraplength=860,
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=12),
+        ).pack(fill="x", padx=10, pady=(0, 6))
+
+        top = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        top.pack(fill="x", **pad)
+        _label(top, text=self._tr("common.csv_file"), width=100, anchor="w").pack(side="left")
+        ctk.CTkEntry(top, textvariable=self._t5_csv).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ctk.CTkButton(
+            top, text=self._tr("common.browse"), width=self._browse_w, height=_BTN_H, command=self._browse_t5_csv
+        ).pack(side="right", padx=(4, 0))
+        ctk.CTkButton(
+            top,
+            text=self._tr("common.load"),
+            width=_btn_w(self._tr("common.load")),
+            height=_BTN_H,
+            command=self._t5_load_csv,
+        ).pack(side="right", padx=(4, 0))
+        ctk.CTkButton(
+            top,
+            text=self._tr("t3.save_csv"),
+            width=_btn_w(self._tr("t3.save_csv")),
+            height=_BTN_H,
+            command=self._t5_save_csv,
+        ).pack(side="right")
+
+        sf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        sf.pack(fill="x", **pad)
+        _label(sf, text=self._tr("t3.search_label"), width=160, anchor="w").pack(side="left")
+        ent5 = ctk.CTkEntry(
+            sf,
+            textvariable=self._t5_filter,
+            placeholder_text=self._tr("t3.filter_placeholder"),
+        )
+        ent5.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ent5.bind("<KeyRelease>", lambda e: self._t5_rebuild_tree())
+
+        ex5 = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        ex5.pack(fill="x", **pad)
+        _label(ex5, text=self._tr("common.exclude_filter"), width=160, anchor="w").pack(side="left")
+        ent_ex5 = ctk.CTkEntry(
+            ex5,
+            textvariable=self._t5_filter_exclude,
+            placeholder_text=self._tr("common.exclude_placeholder"),
+        )
+        ent_ex5.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ent_ex5.bind("<KeyRelease>", lambda e: self._t5_rebuild_tree())
+
+        _label(
+            parent,
+            text=self._tr("common.search_syntax_hint"),
+            anchor="w",
+            justify="left",
+            wraplength=880,
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=11),
+        ).pack(fill="x", padx=10, pady=(0, 2))
+        _label(
+            parent,
+            text=self._tr("common.exclude_syntax_hint"),
+            anchor="w",
+            justify="left",
+            wraplength=880,
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=11),
+        ).pack(fill="x", padx=10, pady=(0, 2))
+        _label(
+            parent,
+            text=self._tr("t5.selection_hint"),
+            anchor="w",
+            justify="left",
+            wraplength=880,
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=11),
+        ).pack(fill="x", padx=10, pady=(0, 4))
+
+        tree_frame = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        tree_frame.pack(fill="both", expand=True, **pad)
+        self._apply_ttk_treeview_style()
+        self._t5_tree = ttk.Treeview(
+            tree_frame,
+            columns=(
+                "path",
+                "file_name",
+                "scene_title",
+                "scene_tags",
+                "scene_markers",
+                "scene_date",
+                "proposed",
+            ),
+            show="headings",
+            height=11,
+            selectmode="extended",
+        )
+        self._t5_tree.heading("path", text=self._tr("t3.col.path"))
+        self._t5_tree.heading("file_name", text=self._tr("t3.col.name"))
+        self._t5_tree.heading("scene_title", text=self._tr("t5.col.scene_title"))
+        self._t5_tree.heading("scene_tags", text=self._tr("t5.col.scene_tags"))
+        self._t5_tree.heading("scene_markers", text=self._tr("t5.col.scene_markers"))
+        self._t5_tree.heading("scene_date", text=self._tr("t5.col.scene_date"))
+        self._t5_tree.heading("proposed", text=self._tr("t5.col.proposed"))
+        self._t5_tree.column("path", width=200, minwidth=60, stretch=False)
+        self._t5_tree.column("file_name", width=100, minwidth=50, stretch=False)
+        self._t5_tree.column("scene_title", width=120, minwidth=50, stretch=False)
+        self._t5_tree.column("scene_tags", width=110, minwidth=50, stretch=False)
+        self._t5_tree.column("scene_markers", width=110, minwidth=50, stretch=False)
+        self._t5_tree.column("scene_date", width=72, minwidth=50, stretch=False)
+        self._t5_tree.column("proposed", width=200, minwidth=80, stretch=False)
+        self._place_ttk_tree_with_scrollbars(tree_frame, self._t5_tree)
+        self._t5_tree.bind("<Button-3>", self._t5_tree_context_menu)
+
+        t5_path_btns = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        t5_path_btns.pack(fill="x", padx=10, pady=(0, 4))
+        _label(t5_path_btns, text=self._tr("t3.selected"), width=90, anchor="w").pack(side="left")
+        ctk.CTkButton(
+            t5_path_btns,
+            text=self._tr("t3.open_explorer"),
+            width=_btn_w(self._tr("t3.open_explorer")),
+            height=_BTN_H,
+            command=self._t5_open_selected_in_explorer,
+        ).pack(side="left")
+
+        opt = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        opt.pack(fill="x", **pad)
+        _label(opt, text=self._tr("t5.title_max"), width=200, anchor="w").pack(side="left")
+        ctk.CTkEntry(opt, textvariable=self._t5_title_max, width=56).pack(side="left", padx=(0, 12))
+        ctk.CTkCheckBox(opt, text=self._tr("t5.include_year"), variable=self._t5_include_year).pack(
+            side="left", padx=(0, 10)
+        )
+        ctk.CTkCheckBox(
+            opt, text=self._tr("t5.include_resolution"), variable=self._t5_include_resolution
+        ).pack(side="left", padx=(0, 10))
+        ctk.CTkCheckBox(opt, text=self._tr("t5.include_rating"), variable=self._t5_include_rating).pack(
+            side="left", padx=(0, 10)
+        )
+
+        rr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        rr.pack(fill="x", **pad)
+        _label(rr, text=self._tr("t5.resolution_mode"), width=200, anchor="w").pack(side="left")
+        ctk.CTkRadioButton(
+            rr,
+            text=self._tr("t5.res_heightp"),
+            variable=self._t5_resolution_mode,
+            value="heightp",
+        ).pack(side="left", padx=(0, 12))
+        ctk.CTkRadioButton(
+            rr,
+            text=self._tr("t5.res_wxh"),
+            variable=self._t5_resolution_mode,
+            value="wxh",
+        ).pack(side="left")
+        rr_spacer = ctk.CTkFrame(rr, fg_color=_UI_SURFACE)
+        rr_spacer.pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(
+            rr,
+            text=self._tr("t5.refresh_probe"),
+            width=_btn_w(self._tr("t5.refresh_probe")),
+            height=_BTN_H,
+            command=self._t5_refresh_probe,
+        ).pack(side="right", padx=(8, 0))
+
+        _label(
+            parent,
+            text=self._tr("t5.tag_structure_hint"),
+            anchor="w",
+            justify="left",
+            wraplength=880,
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=11),
+        ).pack(fill="x", padx=10, pady=(0, 4))
+
+        for i in range(5):
+            tag_row = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+            tag_row.pack(fill="x", **pad)
+            _label(tag_row, text=self._tr("t5.tag_slot", n=i + 1), width=88, anchor="w").pack(side="left")
+            ctk.CTkCheckBox(tag_row, text="", variable=self._t5_tag_en[i]).pack(side="left", padx=(0, 6))
+            ctk.CTkEntry(
+                tag_row,
+                textvariable=self._t5_tag_txt[i],
+                placeholder_text=self._tr("t5.tag_placeholder"),
+            ).pack(side="left", fill="x", expand=True)
+
+        preset_fr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        preset_fr.pack(fill="x", **pad)
+        _label(preset_fr, text=self._tr("t5.preset_label"), width=120, anchor="w").pack(side="left")
+        none_lbl = self._tr("t5.preset_none")
+        self._t5_preset_menu = ctk.CTkOptionMenu(
+            preset_fr,
+            values=[none_lbl],
+            variable=self._t5_preset_pick,
+            command=self._t5_on_preset_menu_change,
+            width=200,
+        )
+        self._t5_preset_menu.pack(side="left", padx=(0, 8))
+        ctk.CTkEntry(
+            preset_fr,
+            textvariable=self._t5_preset_name,
+            placeholder_text=self._tr("t5.preset_name_ph"),
+            width=160,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            preset_fr,
+            text=self._tr("t5.preset_save"),
+            width=_btn_w(self._tr("t5.preset_save")),
+            height=_BTN_H,
+            command=self._t5_save_preset_click,
+        ).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(
+            preset_fr,
+            text=self._tr("t5.preset_delete"),
+            width=_btn_w(self._tr("t5.preset_delete")),
+            height=_BTN_H,
+            command=self._t5_delete_preset_click,
+        ).pack(side="left")
+
+        runf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        runf.pack(fill="x", **pad)
+        ctk.CTkButton(
+            runf,
+            text=self._tr("t5.fill_new_leaf"),
+            width=_btn_w(self._tr("t5.fill_new_leaf")),
+            height=_BTN_H,
+            command=self._t5_fill_new_leaf,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkCheckBox(runf, text=self._tr("t3.preview_only"), variable=self._t5_dry).pack(
+            side="left", padx=(0, 12)
+        )
+        ctk.CTkCheckBox(runf, text=self._tr("t5.selected_only"), variable=self._t5_use_selected).pack(
+            side="left", padx=(0, 12)
+        )
+        ctk.CTkButton(
+            runf,
+            text=self._tr("t3.rename_disk"),
+            width=_btn_w(self._tr("t3.rename_disk")),
+            height=30,
+            fg_color="#1f538d",
+            command=self._t5_run_renames,
+        ).pack(side="left")
+
+        self._t5_sync_preset_menu_from_disk()
+
+    # --- Tab 5 (schema rename) ---
+    def _browse_t5_csv(self) -> None:
+        p = filedialog.askopenfilename(filetypes=[("CSV", "*.csv"), ("All", "*.*")])
+        if p:
+            self._t5_csv.set(p)
+            self._save_settings()
+
+    def _t5_read_presets_json(self) -> dict:
+        if not _SCHEMA_PRESETS_PATH.is_file():
+            return {"version": 1, "presets": {}, "last": ""}
+        try:
+            data = json.loads(_SCHEMA_PRESETS_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {"version": 1, "presets": {}, "last": ""}
+        if not isinstance(data, dict):
+            return {"version": 1, "presets": {}, "last": ""}
+        pr = data.get("presets")
+        if not isinstance(pr, dict):
+            pr = {}
+        last = data.get("last")
+        if not isinstance(last, str):
+            last = ""
+        return {"version": 1, "presets": pr, "last": last}
+
+    def _t5_write_presets_json(self, data: dict) -> None:
+        try:
+            _SCHEMA_PRESETS_PATH.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError as e:
+            self._log(self._tr("log.t5_preset_save_fail", e=e))
+
+    def _t5_collect_preset_dict(self) -> dict:
+        try:
+            tml = int(self._t5_title_max.get().strip() or "15")
+        except ValueError:
+            tml = 15
+        return {
+            "title_max_len": tml,
+            "include_year": bool(self._t5_include_year.get()),
+            "include_resolution": bool(self._t5_include_resolution.get()),
+            "include_rating": bool(self._t5_include_rating.get()),
+            "resolution_mode": (self._t5_resolution_mode.get() or "heightp").strip(),
+            "tag_enabled": [bool(self._t5_tag_en[i].get()) for i in range(5)],
+            "tag_text": [self._t5_tag_txt[i].get() for i in range(5)],
+        }
+
+    def _t5_apply_preset_dict(self, d: dict) -> None:
+        if not isinstance(d, dict):
+            return
+        tml = d.get("title_max_len", 15)
+        try:
+            tml = int(tml)
+        except (TypeError, ValueError):
+            tml = 15
+        self._t5_title_max.set(str(max(1, min(200, tml))))
+        self._t5_include_year.set(bool(d.get("include_year", True)))
+        self._t5_include_resolution.set(bool(d.get("include_resolution", True)))
+        self._t5_include_rating.set(bool(d.get("include_rating", True)))
+        rm = str(d.get("resolution_mode") or "heightp").strip().lower()
+        self._t5_resolution_mode.set(rm if rm in ("heightp", "wxh") else "heightp")
+        te = d.get("tag_enabled")
+        if isinstance(te, list):
+            for i in range(5):
+                if i < len(te):
+                    self._t5_tag_en[i].set(bool(te[i]))
+        tt = d.get("tag_text")
+        if isinstance(tt, list):
+            for i in range(5):
+                if i < len(tt):
+                    self._t5_tag_txt[i].set(str(tt[i] or ""))
+        self._t5_rebuild_tree()
+
+    def _t5_sync_preset_menu_from_disk(self) -> None:
+        data = self._t5_read_presets_json()
+        none_lbl = self._tr("t5.preset_none")
+        names = sorted(data["presets"].keys(), key=str.lower)
+        vals = [none_lbl] + names
+        if self._t5_preset_menu is not None:
+            self._t5_preset_menu.configure(values=vals)
+        last = (data.get("last") or "").strip()
+        if last and last in data["presets"]:
+            self._t5_preset_pick.set(last)
+        else:
+            self._t5_preset_pick.set(none_lbl)
+
+    def _t5_on_preset_menu_change(self, choice: str) -> None:
+        none_lbl = self._tr("t5.preset_none")
+        data = self._t5_read_presets_json()
+        if choice == none_lbl:
+            data["last"] = ""
+            self._t5_write_presets_json(data)
+            return
+        blob = data["presets"].get(choice)
+        if isinstance(blob, dict):
+            self._t5_apply_preset_dict(blob)
+        data["last"] = choice
+        self._t5_write_presets_json(data)
+
+    def _t5_save_preset_click(self) -> None:
+        name = self._t5_preset_name.get().strip()
+        if not name:
+            self._log(self._tr("log.t5_preset_need_name"))
+            return
+        none_lbl = self._tr("t5.preset_none")
+        if name == none_lbl:
+            self._log(self._tr("log.t5_preset_bad_name"))
+            return
+        data = self._t5_read_presets_json()
+        data["presets"][name] = self._t5_collect_preset_dict()
+        data["last"] = name
+        self._t5_write_presets_json(data)
+        self._t5_sync_preset_menu_from_disk()
+        self._t5_preset_pick.set(name)
+        self._log(self._tr("log.t5_preset_saved", name=name))
+
+    def _t5_delete_preset_click(self) -> None:
+        choice = self._t5_preset_pick.get().strip()
+        none_lbl = self._tr("t5.preset_none")
+        if not choice or choice == none_lbl:
+            self._log(self._tr("log.t5_preset_none_selected"))
+            return
+        data = self._t5_read_presets_json()
+        if choice in data["presets"]:
+            del data["presets"][choice]
+        if data.get("last") == choice:
+            data["last"] = ""
+        self._t5_write_presets_json(data)
+        self._t5_sync_preset_menu_from_disk()
+        self._log(self._tr("log.t5_preset_deleted", name=choice))
+
+    def _t5_row_visible(self, row: dict[str, str]) -> bool:
+        return row_passes_list_filters(
+            self._t5_filter.get(),
+            self._t5_filter_exclude.get(),
+            file_path=row.get("file_path", ""),
+            file_name=row.get("file_name", ""),
+            new_leaf=row.get("new_leaf", ""),
+            scene_title=row.get("scene_title", ""),
+            scene_tags=row.get("scene_tags", ""),
+            scene_markers=row.get("scene_markers", ""),
+        )
+
+    def _t5_visible_indices(self) -> list[int]:
+        return [i for i, row in enumerate(self._t5_rows) if self._t5_row_visible(row)]
+
+    def _t5_selected_indices(self) -> list[int]:
+        out: list[int] = []
+        if not hasattr(self, "_t5_tree"):
+            return out
+        for iid in self._t5_tree.selection():
+            try:
+                out.append(int(iid))
+            except ValueError:
+                continue
+        return out
+
+    def _t5_cache_key_for_row(self, row: dict[str, str]) -> str:
+        fp = (row.get("file_path") or "").strip()
+        hit = resolve_csv_path_to_existing_file(fp)
+        return str(hit) if hit else ""
+
+    def _t5_dims_for_row(self, row: dict[str, str]) -> tuple[int | None, int | None]:
+        key = self._t5_cache_key_for_row(row)
+        if not key:
+            return None, None
+        w, h = self._t5_ffprobe_cache.get(key, (None, None))
+        return w, h
+
+    def _t5_schema_options_kwargs(self) -> dict:
+        try:
+            tml = int(self._t5_title_max.get().strip() or "15")
+        except ValueError:
+            tml = 15
+        return {
+            "title_max_len": tml,
+            "tag_enabled": [self._t5_tag_en[i].get() for i in range(5)],
+            "tag_text": [self._t5_tag_txt[i].get() for i in range(5)],
+            "include_year": self._t5_include_year.get(),
+            "include_resolution": self._t5_include_resolution.get(),
+            "include_rating": self._t5_include_rating.get(),
+            "resolution_mode": self._t5_resolution_mode.get(),
+        }
+
+    def _t5_compute_leaf_for_row(self, row: dict[str, str]) -> tuple[str, str]:
+        w, h = self._t5_dims_for_row(row)
+        leaf, warn = build_schema_rename_leaf(
+            row,
+            video_width=w,
+            video_height=h,
+            **self._t5_schema_options_kwargs(),
+        )
+        return leaf, warn
+
+    def _t5_rebuild_tree(self) -> None:
+        if not hasattr(self, "_t5_tree"):
+            return
+        prev = self._t5_selected_indices()
+        for item in self._t5_tree.get_children():
+            self._t5_tree.delete(item)
+        for i, row in enumerate(self._t5_rows):
+            if not self._t5_row_visible(row):
+                continue
+            leaf, _w = self._t5_compute_leaf_for_row(row)
+            self._t5_tree.insert(
+                "",
+                "end",
+                iid=str(i),
+                values=(
+                    row.get("file_path", ""),
+                    row.get("file_name", ""),
+                    row.get("scene_title", ""),
+                    row.get("scene_tags", ""),
+                    row.get("scene_markers", ""),
+                    row.get("scene_date", ""),
+                    leaf or "—",
+                ),
+            )
+        self._ttk_restore_row_selection(self._t5_tree, prev)
+
+    def _t5_load_csv(self) -> None:
+        path = self._t5_csv.get().strip()
+        if not path or not Path(path).is_file():
+            self._log(self._tr("log.t5_need_csv"))
+            return
+        try:
+            self._t5_rows, sniffed = read_rename_csv(Path(path))
+        except OSError as e:
+            self._log(self._tr("log.csv_read_fail", e=e))
+            return
+        self._t5_ffprobe_cache.clear()
+        self._log(self._tr("log.t5_loaded", n=len(self._t5_rows), path=path, sniff=sniffed))
+        self._t5_rebuild_tree()
+        self._save_settings()
+
+    def _t5_save_csv(self) -> None:
+        path = self._t5_csv.get().strip()
+        if not path:
+            path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")])
+            if not path:
+                return
+            self._t5_csv.set(path)
+        try:
+            write_rename_csv(Path(path), self._t5_rows, self._app_csv_delim())
+            self._log(self._tr("log.t5_saved", n=len(self._t5_rows), path=path))
+        except OSError as e:
+            self._log(self._tr("log.save_failed", e=e))
+        self._save_settings()
+
+    def _t5_refresh_probe(self) -> None:
+        exe = find_ffprobe_executable()
+        if not exe:
+            self._log(self._tr("log.t5_no_ffprobe"))
+            return
+        vis = self._t5_visible_indices()
+        ok = 0
+        for i in vis:
+            row = self._t5_rows[i]
+            key = self._t5_cache_key_for_row(row)
+            if not key:
+                continue
+            w, h, err = ffprobe_video_size(key, ffprobe_exe=exe)
+            if w and h:
+                self._t5_ffprobe_cache[key] = (w, h)
+                ok += 1
+            elif err:
+                fp = row.get("file_path", "")
+                self._log(self._tr("log.t5_probe_row_fail", path=fp, err=err[:120]))
+        self._log(self._tr("log.t5_probed", ok=ok, total=len(vis)))
+        self._t5_rebuild_tree()
+
+    def _t5_fill_new_leaf(self, *, silent: bool = False) -> None:
+        idxs = self._t5_selected_indices() if self._t5_use_selected.get() else self._t5_visible_indices()
+        n = 0
+        for i in idxs:
+            if i < 0 or i >= len(self._t5_rows):
+                continue
+            leaf, _w = self._t5_compute_leaf_for_row(self._t5_rows[i])
+            if leaf:
+                self._t5_rows[i]["new_leaf"] = leaf
+                n += 1
+        if not silent:
+            self._log(self._tr("log.t5_fill_done", n=n))
+        self._t5_rebuild_tree()
+
+    def _t5_run_renames(self) -> None:
+        if self._t5_use_selected.get():
+            sel = self._t5_selected_indices()
+            if not sel:
+                self._log(self._tr("log.t5_rename_need_selection"))
+                return
+            rename_indices = sel
+        else:
+            rename_indices = None
+        # new_leaf is only updated on Fill; re-fill from current schema so tag/title changes apply.
+        self._t5_fill_new_leaf(silent=True)
+        dry = self._t5_dry.get()
+        renamed, skipped, log_lines = apply_file_renames(
+            self._t5_rows, dry_run=dry, only_indices=rename_indices
+        )
+        for line in log_lines:
+            self._log(line)
+        self._log(self._tr("log.t5_rename_summary", renamed=renamed, skipped=skipped, dry=dry))
+        self._t5_rebuild_tree()
+        self._save_settings()
+
     # --- Tab 1 ---
     def _t1_reset_graphql_path(self) -> None:
         self._t1_graphql_path.set("")
@@ -1192,7 +1962,10 @@ class FileToolsApp(ctk.CTk):
         if r.returncode == 0:
             self._last_shared_csv = str(Path(out).resolve())
             self._t3_csv.set(self._last_shared_csv)
+            self._t4_csv.set(self._last_shared_csv)
+            self._t5_csv.set(self._last_shared_csv)
             self._log(self._tr("log.tip_tab3_csv", path=self._last_shared_csv))
+            self._log(self._tr("log.tip_shared_csv_tabs", path=self._last_shared_csv))
             self._save_settings()
 
     # --- Tab 2 ---
@@ -1318,16 +2091,21 @@ class FileToolsApp(ctk.CTk):
             self._t4_csv.set(p)
 
     def _t4_row_visible(self, row: dict[str, str]) -> bool:
-        return row_matches_search_filter(
+        return row_passes_list_filters(
             self._t4_filter.get(),
+            self._t4_filter_exclude.get(),
             file_path=row.get("file_path", ""),
             file_name=row.get("file_name", ""),
             new_leaf=row.get("new_leaf", ""),
+            scene_title=row.get("scene_title", ""),
+            scene_tags=row.get("scene_tags", ""),
+            scene_markers=row.get("scene_markers", ""),
         )
 
     def _t4_rebuild_tree(self) -> None:
         if not hasattr(self, "_t4_tree"):
             return
+        prev = self._t4_selected_indices()
         for item in self._t4_tree.get_children():
             self._t4_tree.delete(item)
         for i, row in enumerate(self._t4_rows):
@@ -1339,6 +2117,7 @@ class FileToolsApp(ctk.CTk):
                 iid=str(i),
                 values=(row.get("file_path", ""), row.get("file_name", ""), row.get("scene_id", "")),
             )
+        self._ttk_restore_row_selection(self._t4_tree, prev)
 
     def _t4_selected_indices(self) -> list[int]:
         out: list[int] = []
@@ -1610,14 +2389,19 @@ class FileToolsApp(ctk.CTk):
             self._log(self._tr("log.save_failed", e=e))
 
     def _t3_row_visible(self, row: dict[str, str]) -> bool:
-        return row_matches_search_filter(
+        return row_passes_list_filters(
             self._t3_filter.get(),
+            self._t3_filter_exclude.get(),
             file_path=row.get("file_path", ""),
             file_name=row.get("file_name", ""),
             new_leaf=row.get("new_leaf", ""),
+            scene_title=row.get("scene_title", ""),
+            scene_tags=row.get("scene_tags", ""),
+            scene_markers=row.get("scene_markers", ""),
         )
 
     def _t3_rebuild_tree(self) -> None:
+        prev = self._t3_selected_indices()
         for item in self._tree.get_children():
             self._tree.delete(item)
         for i, row in enumerate(self._rows):
@@ -1633,6 +2417,7 @@ class FileToolsApp(ctk.CTk):
                     row.get("new_leaf", ""),
                 ),
             )
+        self._ttk_restore_row_selection(self._tree, prev)
 
     def _t3_selected_indices(self) -> list[int]:
         out: list[int] = []
@@ -1644,13 +2429,7 @@ class FileToolsApp(ctk.CTk):
         return out
 
     def _t3_restore_selection(self, indices: list[int]) -> None:
-        want = {str(i) for i in indices}
-        have = [c for c in self._tree.get_children() if c in want]
-        if not have:
-            return
-        self._tree.selection_set(have[0])
-        for c in have[1:]:
-            self._tree.selection_add(c)
+        self._ttk_restore_row_selection(self._tree, indices)
 
     def _t3_on_select(self, _evt=None) -> None:
         sel = self._tree.selection()
@@ -1712,12 +2491,9 @@ class FileToolsApp(ctk.CTk):
             return
         self._log(self._tr("log.copied_path"))
 
-    def _t3_open_selected_path(self) -> None:
-        fp = self._t3_selected_file_path()
-        if not fp:
-            self._log(self._tr("log.select_item"))
-            return
-        p = Path(fp).expanduser()
+    def _open_path_in_file_manager(self, fp: str) -> None:
+        """Open folder or reveal file in Explorer / Finder / xdg-open (same rules as Tab 3)."""
+        p = Path((fp or "").strip()).expanduser()
         try:
             rp = p.resolve(strict=False)
         except OSError:
@@ -1753,6 +2529,71 @@ class FileToolsApp(ctk.CTk):
                 subprocess.run(["xdg-open", str(rp.parent)], check=False)
             else:
                 self._log(self._tr("log.path_not_found", fp=fp))
+
+    def _t3_open_selected_path(self) -> None:
+        fp = self._t3_selected_file_path()
+        if not fp:
+            self._log(self._tr("log.select_item"))
+            return
+        self._open_path_in_file_manager(fp)
+
+    def _t4_selected_file_path(self) -> str:
+        sel = self._t4_tree.selection()
+        if not sel:
+            return ""
+        try:
+            i = int(sel[0])
+            return (self._t4_rows[i].get("file_path") or "").strip()
+        except (ValueError, IndexError):
+            return ""
+
+    def _t4_open_selected_in_explorer(self) -> None:
+        fp = self._t4_selected_file_path()
+        if not fp:
+            self._log(self._tr("log.select_item"))
+            return
+        self._open_path_in_file_manager(fp)
+
+    def _t4_tree_context_menu(self, event) -> None:
+        row_id = self._t4_tree.identify_row(event.y)
+        if row_id:
+            self._t4_tree.selection_set(row_id)
+            self._t4_tree.focus(row_id)
+        menu = Menu(self, tearoff=0)
+        menu.add_command(label=self._tr("ctx.open_in_explorer"), command=self._t4_open_selected_in_explorer)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _t5_selected_file_path(self) -> str:
+        sel = self._t5_tree.selection()
+        if not sel:
+            return ""
+        try:
+            i = int(sel[0])
+            return (self._t5_rows[i].get("file_path") or "").strip()
+        except (ValueError, IndexError):
+            return ""
+
+    def _t5_open_selected_in_explorer(self) -> None:
+        fp = self._t5_selected_file_path()
+        if not fp:
+            self._log(self._tr("log.select_item"))
+            return
+        self._open_path_in_file_manager(fp)
+
+    def _t5_tree_context_menu(self, event) -> None:
+        row_id = self._t5_tree.identify_row(event.y)
+        if row_id:
+            self._t5_tree.selection_set(row_id)
+            self._t5_tree.focus(row_id)
+        menu = Menu(self, tearoff=0)
+        menu.add_command(label=self._tr("ctx.open_in_explorer"), command=self._t5_open_selected_in_explorer)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
 
     def _t3_tree_context_menu(self, event) -> None:
         row_id = self._tree.identify_row(event.y)
@@ -2167,6 +3008,8 @@ class FileToolsApp(ctk.CTk):
             "t2_patterns": self._t2_patterns.get(),
             "t2_out": self._t2_out.get(),
             "t3_csv": self._t3_csv.get(),
+            "t3_filter": self._t3_filter.get(),
+            "t3_filter_exclude": self._t3_filter_exclude.get(),
             "t3_only_under": self._t3_only_under.get(),
             "t3_find": self._t3_find.get(),
             "t3_replace": self._t3_replace.get(),
@@ -2174,12 +3017,26 @@ class FileToolsApp(ctk.CTk):
             "t3_dry": self._t3_dry.get(),
             "t4_csv": self._t4_csv.get(),
             "t4_filter": self._t4_filter.get(),
+            "t4_filter_exclude": self._t4_filter_exclude.get(),
             "t4_target_folder": self._t4_target_folder.get(),
             "t4_subfolder": self._t4_subfolder.get(),
             "t4_per_source": self._t4_per_source.get(),
             "t4_dry": self._t4_dry.get(),
             "t4_use_selected": self._t4_use_selected.get(),
             "ui_language": self._ui_language.get(),
+            "t5_csv": self._t5_csv.get(),
+            "t5_filter": self._t5_filter.get(),
+            "t5_filter_exclude": self._t5_filter_exclude.get(),
+            "t5_title_max": self._t5_title_max.get(),
+            "t5_include_year": self._t5_include_year.get(),
+            "t5_include_resolution": self._t5_include_resolution.get(),
+            "t5_include_rating": self._t5_include_rating.get(),
+            "t5_resolution_mode": self._t5_resolution_mode.get(),
+            "t5_dry": self._t5_dry.get(),
+            "t5_use_selected": self._t5_use_selected.get(),
+            "t5_tag_en": [self._t5_tag_en[i].get() for i in range(5)],
+            "t5_tag_txt": [self._t5_tag_txt[i].get() for i in range(5)],
+            "t5_preset_name": self._t5_preset_name.get(),
         }
 
     def _load_settings(self) -> None:
@@ -2217,6 +3074,8 @@ class FileToolsApp(ctk.CTk):
         g("t2_patterns", self._t2_patterns)
         g("t2_out", self._t2_out)
         g("t3_csv", self._t3_csv)
+        g("t3_filter", self._t3_filter)
+        g("t3_filter_exclude", self._t3_filter_exclude)
         g("t3_only_under", self._t3_only_under)
         g("t3_find", self._t3_find)
         g("t3_replace", self._t3_replace)
@@ -2224,12 +3083,32 @@ class FileToolsApp(ctk.CTk):
         g("t3_dry", self._t3_dry)
         g("t4_csv", self._t4_csv)
         g("t4_filter", self._t4_filter)
+        g("t4_filter_exclude", self._t4_filter_exclude)
         g("t4_target_folder", self._t4_target_folder)
         g("t4_subfolder", self._t4_subfolder)
         g("t4_per_source", self._t4_per_source)
         g("t4_dry", self._t4_dry)
         g("t4_use_selected", self._t4_use_selected)
+        g("t5_csv", self._t5_csv)
+        g("t5_filter", self._t5_filter)
+        g("t5_filter_exclude", self._t5_filter_exclude)
+        g("t5_title_max", self._t5_title_max)
+        g("t5_include_year", self._t5_include_year)
+        g("t5_include_resolution", self._t5_include_resolution)
+        g("t5_include_rating", self._t5_include_rating)
+        g("t5_resolution_mode", self._t5_resolution_mode)
+        g("t5_dry", self._t5_dry)
+        g("t5_use_selected", self._t5_use_selected)
+        g("t5_preset_name", self._t5_preset_name)
         g("ui_language", self._ui_language)
+        te = data.get("t5_tag_en")
+        if isinstance(te, list):
+            for i, v in enumerate(te[:5]):
+                self._t5_tag_en[i].set(bool(v))
+        tt = data.get("t5_tag_txt")
+        if isinstance(tt, list):
+            for i, v in enumerate(tt[:5]):
+                self._t5_tag_txt[i].set(str(v) if v is not None else "")
         am = (self._appearance_mode.get() or "dark").strip().lower()
         if am not in ("dark", "light", "system"):
             am = "dark"
@@ -2239,6 +3118,9 @@ class FileToolsApp(ctk.CTk):
             self._t1_delim.set(";")
         ul = self._norm_lang_code(self._ui_language.get())
         self._ui_language.set(ul)
+        rm = (self._t5_resolution_mode.get() or "heightp").strip().lower()
+        if rm not in ("heightp", "wxh"):
+            self._t5_resolution_mode.set("heightp")
         self._apply_user_appearance_setting()
         if hasattr(self, "_translator"):
             self._translator.set_lang(ul)

@@ -10,10 +10,12 @@ import io
 import json
 import os
 import re
+from datetime import datetime
 import shutil
+import subprocess
 import unicodedata
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Sequence
 from urllib.parse import unquote
 from urllib.request import Request, urlopen
 
@@ -31,13 +33,22 @@ CSV_COLUMNS = (
     "file_directory",
     "file_name",
     "new_leaf",
+    "scene_date",
+    "scene_rating",
+    "scene_tags",
+    "scene_markers",
 )
 
 # Lowercase alternate headers from other Stash export scripts / versions (used when primary is missing).
 CSV_HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "file_path": ("path", "filepath", "full_path", "fullpath"),
     "scene_id": ("sceneid", "stash_scene_id", "stash_id"),
+    "scene_title": ("scene title", "scenetitle", "stash_title", "title_stash", "title"),
     "new_leaf": ("new_filename", "new_name", "target_leaf"),
+    "scene_date": ("date", "released", "scene_date_iso", "release_date"),
+    "scene_rating": ("rating", "rating100", "stars"),
+    "scene_tags": ("tags", "stash_tags", "tag_list"),
+    "scene_markers": ("markers", "scene_marker_titles", "marker_titles"),
 }
 
 # Stash scene `id` in GraphQL is often a numeric string; accept column "id" only in that shape to avoid wrong columns.
@@ -76,11 +87,14 @@ _FIELD_FILTER_PREFIXES: tuple[tuple[str, str], ...] = (
     ("path:", "path"),
     ("new:", "new_leaf"),
     ("nl:", "new_leaf"),
+    ("title:", "scene_title"),
+    ("tags:", "scene_tags"),
+    ("markers:", "scene_markers"),
 )
 
 
 def _split_filter_field_term(part: str) -> tuple[str | None, str]:
-    """Return (field or None, remainder). field is path | name | new_leaf."""
+    """Return (field or None, remainder). field is path | name | new_leaf | scene_title | scene_tags | scene_markers."""
     p = part.strip()
     if not p:
         return None, ""
@@ -144,12 +158,23 @@ def _split_or_groups(raw: str) -> list[str]:
     return [g.strip() for g in merged.split("|") if g.strip()]
 
 
+def _effective_scene_title_for_search(file_name: str, scene_title: str) -> str:
+    """If the CSV scene_title cell is empty (common for disk-only rows), use the file stem like Tab 5."""
+    st = (scene_title or "").strip()
+    if st:
+        return st
+    return Path(file_name or "").stem
+
+
 def row_matches_search_filter(
     filter_raw: str,
     *,
     file_path: str = "",
     file_name: str = "",
     new_leaf: str = "",
+    scene_title: str = "",
+    scene_tags: str = "",
+    scene_markers: str = "",
 ) -> bool:
     """
     Tab 3 / Tab 4 list filter. Case-insensitive substring match unless a field prefix is used.
@@ -161,7 +186,10 @@ def row_matches_search_filter(
     - No prefix: part may match file_path, file_name, or new_leaf (any).
     - ``name:`` or ``file:`` — only the file name (leaf).
     - ``path:`` or ``folder:`` — only the full path.
-    - ``new:`` or ``nl:`` — only the new file name column.
+    - ``new:`` or ``nl:`` — only the new file name column (often empty until you fill it).
+    - ``title:`` — scene title from CSV if present, else the file name stem (extension stripped).
+    - ``tags:`` — Stash tag names cell (``scene_tags``).
+    - ``markers:`` — scene marker titles cell (``scene_markers``).
     - Quotes ``"like this"`` strip to search that exact substring (spaces kept); works with or without a prefix.
 
     Examples:
@@ -175,6 +203,9 @@ def row_matches_search_filter(
     fp_l = (file_path or "").lower()
     fn_l = (file_name or "").lower()
     nl_l = (new_leaf or "").lower()
+    st_l = _effective_scene_title_for_search(file_name, scene_title).lower()
+    tg_l = (scene_tags or "").lower()
+    mk_l = (scene_markers or "").lower()
 
     def term_matches(part: str) -> bool:
         field, text = _split_filter_field_term(part)
@@ -188,7 +219,21 @@ def row_matches_search_filter(
             return t in fn_l
         if field == "new_leaf":
             return t in nl_l
-        return t in fp_l or t in fn_l or t in nl_l
+        if field == "scene_title":
+            return t in st_l
+        if field == "scene_tags":
+            return t in tg_l
+        if field == "scene_markers":
+            return t in mk_l
+        # Unqualified: match path, file name, new_leaf, scene_title, tags, markers.
+        return (
+            t in fp_l
+            or t in fn_l
+            or t in nl_l
+            or t in st_l
+            or t in tg_l
+            or t in mk_l
+        )
 
     or_groups = _split_or_groups(raw)
     if not or_groups:
@@ -200,6 +245,36 @@ def row_matches_search_filter(
         if all(term_matches(p) for p in parts):
             return True
     return False
+
+
+def row_passes_list_filters(
+    include_raw: str,
+    exclude_raw: str,
+    *,
+    file_path: str = "",
+    file_name: str = "",
+    new_leaf: str = "",
+    scene_title: str = "",
+    scene_tags: str = "",
+    scene_markers: str = "",
+) -> bool:
+    """
+    List visibility: row matches the include filter and does **not** match the exclude filter.
+    Empty exclude string disables exclusion. Same field syntax as ``row_matches_search_filter``.
+    """
+    kw: dict[str, str] = {
+        "file_path": file_path,
+        "file_name": file_name,
+        "new_leaf": new_leaf,
+        "scene_title": scene_title,
+        "scene_tags": scene_tags,
+        "scene_markers": scene_markers,
+    }
+    if not row_matches_search_filter(include_raw, **kw):
+        return False
+    if not (exclude_raw or "").strip():
+        return True
+    return not row_matches_search_filter(exclude_raw, **kw)
 
 
 def filter_stub_for_subfolder_suggest(filter_raw: str) -> str:
@@ -520,6 +595,10 @@ def csv_row_from_path(p: Path) -> dict[str, str]:
         "file_directory": str(p.parent),
         "file_name": p.name,
         "new_leaf": "",
+        "scene_date": "",
+        "scene_rating": "",
+        "scene_tags": "",
+        "scene_markers": "",
     }
 
 
@@ -606,11 +685,15 @@ def read_rename_csv(path: Path, delimiter: Optional[str] = None) -> tuple[list[d
         rows.append(
             {
                 "scene_id": _coalesce_scene_id(norm),
-                "scene_title": norm.get("scene_title", ""),
+                "scene_title": _coalesce_norm_field(norm, "scene_title"),
                 "file_path": fp,
                 "file_directory": norm.get("file_directory", "") or str(p.parent),
                 "file_name": norm.get("file_name", "") or p.name,
                 "new_leaf": _coalesce_norm_field(norm, "new_leaf"),
+                "scene_date": _coalesce_norm_field(norm, "scene_date"),
+                "scene_rating": _coalesce_norm_field(norm, "scene_rating"),
+                "scene_tags": _coalesce_norm_field(norm, "scene_tags"),
+                "scene_markers": _coalesce_norm_field(norm, "scene_markers"),
             }
         )
     return rows, delimiter
@@ -633,10 +716,12 @@ def apply_file_renames(
     rows: list[dict[str, str]],
     *,
     only_under_folder: Optional[str] = None,
+    only_indices: Optional[Sequence[int]] = None,
     dry_run: bool = False,
 ) -> tuple[int, int, list[str]]:
     """
     For each row with non-empty new_leaf different from file_name, rename on disk.
+    If ``only_indices`` is set, only those row indices are considered (e.g. Tab 5 selection).
     Returns (renamed_count, skipped_count, log_lines).
     """
     log: list[str] = []
@@ -650,7 +735,24 @@ def apply_file_renames(
             log.append(f"Only-under folder does not exist: {root_filter}")
             return 0, 0, log
 
-    for row in rows:
+    if only_indices is not None:
+        allowed: set[int] = set()
+        for raw_i in only_indices:
+            try:
+                ii = int(raw_i)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= ii < len(rows):
+                allowed.add(ii)
+        if not allowed:
+            log.append("Rename: no valid indices (empty selection or out of range).\n")
+            return 0, 0, log
+        row_indices = sorted(allowed)
+    else:
+        row_indices = list(range(len(rows)))
+
+    for i in row_indices:
+        row = rows[i]
         raw_fp = row["file_path"].strip()
         if not raw_fp:
             skipped += 1
@@ -1036,3 +1138,262 @@ query ProbeCsvExport($filter: FindFilterType) {
         True,
         f"same fields as CSV export (id, title, files.path). Scene count from Stash: ~{cnt_s}.",
     )
+
+
+def find_ffprobe_executable() -> Optional[str]:
+    return shutil.which("ffprobe")
+
+
+def ffprobe_video_size(
+    path_str: str,
+    *,
+    ffprobe_exe: Optional[str] = None,
+) -> tuple[Optional[int], Optional[int], str]:
+    """
+    First video stream width/height via ffprobe JSON. Returns (w, h, err).
+    err empty on success.
+    """
+    exe = ffprobe_exe or find_ffprobe_executable()
+    if not exe:
+        return None, None, "ffprobe not found in PATH (install FFmpeg and add to PATH)"
+    raw = (path_str or "").strip()
+    if not raw:
+        return None, None, "empty path"
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+    try:
+        proc = subprocess.run(
+            [
+                exe,
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "json",
+                raw,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            creationflags=creationflags,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return None, None, str(e)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout or "").strip()
+        return None, None, err or f"ffprobe exit {proc.returncode}"
+    try:
+        data = json.loads(proc.stdout or "{}")
+    except json.JSONDecodeError:
+        return None, None, "invalid ffprobe JSON"
+    streams = data.get("streams")
+    if not isinstance(streams, list) or not streams:
+        return None, None, "no video stream"
+    st0 = streams[0]
+    if not isinstance(st0, dict):
+        return None, None, "bad stream entry"
+    try:
+        wi = int(st0.get("width") or 0)
+        hi = int(st0.get("height") or 0)
+    except (TypeError, ValueError):
+        return None, None, "non-numeric size"
+    if wi <= 0 or hi <= 0:
+        return None, None, "invalid dimensions"
+    return wi, hi, ""
+
+
+def format_resolution_tag(width: int, height: int, mode: str) -> str:
+    """mode: heightp (default) or wxh."""
+    m = (mode or "heightp").strip().lower()
+    if m == "wxh":
+        return f"{width}x{height}"
+    tier = {
+        4320: "4320p",
+        2160: "2160p",
+        1440: "1440p",
+        1080: "1080p",
+        720: "720p",
+        576: "576p",
+        480: "480p",
+        360: "360p",
+    }
+    return tier.get(height, f"{width}x{height}")
+
+
+def extract_year_from_scene_date(s: str) -> str:
+    t = (s or "").strip()
+    if len(t) >= 4 and t[:4].isdigit():
+        y = int(t[:4])
+        if 1900 <= y <= 2100:
+            return t[:4]
+    m = re.search(r"(19|20)\d{2}", t)
+    if m:
+        y = int(m.group(0))
+        if 1900 <= y <= 2100:
+            return str(y)
+    return ""
+
+
+def _file_timestamp_for_schema_year(path: Path) -> float:
+    """
+    Best-effort "when did this file appear" for year extraction (local time when converted).
+    Windows: creation time (``st_ctime``). macOS (and some BSD): ``st_birthtime`` if set.
+    Otherwise: last modification time (``st_mtime``). On Linux, true creation time is often unavailable.
+    """
+    st = path.stat()
+    if os.name == "nt":
+        return st.st_ctime
+    birth = getattr(st, "st_birthtime", None)
+    if birth is not None and birth > 0:
+        return birth
+    return st.st_mtime
+
+
+def extract_year_from_file_for_schema(path: Path) -> str:
+    """YYYY from file timestamps (see ``_file_timestamp_for_schema_year``)."""
+    try:
+        if not path.is_file():
+            return ""
+        y = datetime.fromtimestamp(_file_timestamp_for_schema_year(path)).year
+        if 1900 <= y <= 2100:
+            return str(y)
+    except OSError:
+        pass
+    return ""
+
+
+def year_for_schema_rename_bracket(row: dict[str, str]) -> str:
+    """Prefer ``scene_date`` from CSV/Stash; if empty or unusable, use on-disk file (creation where OS exposes it)."""
+    y = extract_year_from_scene_date(row.get("scene_date") or "")
+    if y:
+        return y
+    resolved = resolve_csv_path_to_existing_file((row.get("file_path") or "").strip())
+    if resolved is None:
+        return ""
+    return extract_year_from_file_for_schema(resolved)
+
+
+def format_rating_token_for_schema(raw: str) -> str:
+    """
+    Stash GraphQL often uses rating100 (0–100). Maps to 1–5 for compact [n] tags.
+    Non-numeric values are sanitized and truncated (custom stars text).
+    """
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    try:
+        v = int(float(s.replace(",", ".")))
+    except ValueError:
+        inner = sanitize_windows_dir_component(s)
+        return inner[:20] if inner else ""
+    if v <= 0:
+        return ""
+    stars = max(1, min(5, (v + 10) // 20))
+    return str(stars)
+
+
+def primary_label_for_schema_row(row: dict[str, str]) -> str:
+    """
+    Short name source for Tab 5 proposed file name: scene_title only, then file stem.
+    Stash tags/markers stay in CSV for search/columns — they are not used as the title prefix.
+    """
+    st = (row.get("scene_title") or "").strip()
+    if st:
+        return st
+    return Path(row.get("file_name") or "").stem
+
+
+def sanitize_schema_label(s: str, *, max_len: int = 80) -> str:
+    t = (s or "").strip()
+    if not t:
+        return ""
+    for ch in "\\/:*?\"<>|":
+        t = t.replace(ch, "_")
+    t = t.rstrip(" .")
+    if not t:
+        return ""
+    return t[:max_len]
+
+
+def build_schema_rename_leaf(
+    row: dict[str, str],
+    *,
+    title_max_len: int = 15,
+    tag_enabled: Optional[list[bool]] = None,
+    tag_text: Optional[list[str]] = None,
+    include_year: bool = True,
+    include_resolution: bool = True,
+    include_rating: bool = True,
+    resolution_mode: str = "heightp",
+    video_width: Optional[int] = None,
+    video_height: Optional[int] = None,
+) -> tuple[str, str]:
+    """
+    Build a file name like: ShortTitle (2020) - [HDR] [1080p] [4].ext
+    Year in parentheses: Stash ``scene_date`` when present, else the video file's year from
+    creation time (Windows) / birth time (macOS) / else last modification.
+    Returns (leaf, warning). leaf empty if result would be invalid.
+    """
+    warn = ""
+    try:
+        tml = int(title_max_len)
+    except (TypeError, ValueError):
+        tml = 15
+    tml = max(1, min(200, tml))
+
+    te = list(tag_enabled or [])
+    tt = list(tag_text or [])
+    while len(te) < 5:
+        te.append(False)
+    while len(tt) < 5:
+        tt.append("")
+    te = te[:5]
+    tt = tt[:5]
+
+    title_src = primary_label_for_schema_row(row)
+    title = sanitize_schema_label(title_src, max_len=400)
+    if not title:
+        title = "video"
+    title_short = title[:tml]
+
+    year_part = ""
+    if include_year:
+        y = year_for_schema_rename_bracket(row)
+        if y:
+            year_part = f" ({y})"
+
+    brackets: list[str] = []
+    for i in range(5):
+        if te[i] and (tt[i] or "").strip():
+            inner = sanitize_schema_label(tt[i].strip(), max_len=40)
+            if inner:
+                brackets.append(f"[{inner}]")
+
+    if include_resolution:
+        if video_width and video_height:
+            brackets.append(
+                f"[{format_resolution_tag(video_width, video_height, resolution_mode)}]"
+            )
+        else:
+            if not warn:
+                warn = "resolution enabled but dimensions missing (click ffprobe start)"
+
+    if include_rating:
+        rt = format_rating_token_for_schema(row.get("scene_rating") or "")
+        if rt:
+            brackets.append(f"[{rt}]")
+
+    tail = ""
+    if brackets:
+        tail = " - " + " ".join(brackets)
+
+    ext = Path(row.get("file_name") or "").suffix
+
+    leaf = f"{title_short}{year_part}{tail}{ext}"
+    if any(c in leaf for c in '\\/:*?"<>|'):
+        return "", "result contains illegal filename characters"
+    if not leaf.strip():
+        return "", "empty file name"
+    return leaf, warn
