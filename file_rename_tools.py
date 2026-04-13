@@ -68,6 +68,153 @@ def sniff_delimiter(sample: str) -> str:
     return ";" if sample.count(";") >= sample.count(",") else ","
 
 
+# Longest match wins (e.g. folder: before path: is not needed — different strings; new: before nl: length 4>3).
+_FIELD_FILTER_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("folder:", "path"),
+    ("name:", "name"),
+    ("file:", "name"),
+    ("path:", "path"),
+    ("new:", "new_leaf"),
+    ("nl:", "new_leaf"),
+)
+
+
+def _split_filter_field_term(part: str) -> tuple[str | None, str]:
+    """Return (field or None, remainder). field is path | name | new_leaf."""
+    p = part.strip()
+    if not p:
+        return None, ""
+    pl = p.lower()
+    best_len = -1
+    best_field: str | None = None
+    best_prefix = ""
+    for prefix, field in _FIELD_FILTER_PREFIXES:
+        lp = prefix.lower()
+        if pl.startswith(lp) and len(lp) > best_len:
+            best_len = len(lp)
+            best_field = field
+            best_prefix = prefix
+    if best_field is None:
+        return None, p
+    return best_field, p[len(best_prefix) :].strip()
+
+
+def _unquote_search_phrase(s: str) -> str:
+    """Strip one pair of ASCII double/single quotes (Google-style exact phrase as substring)."""
+    s = s.strip()
+    if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
+        return s[1:-1]
+    if len(s) >= 2 and s[0] == "'" and s[-1] == "'":
+        return s[1:-1]
+    return s
+
+
+_QUOTED_SEARCH_SEGMENT = re.compile(r'"[^"]*"|\'[^\']*\'')
+
+
+def _apply_or_substitutions_unquoted(chunk: str) -> str:
+    """
+    Turn OR alternatives into ``|`` for splitting:
+    - Word `` OR `` (case-insensitive, with spaces)
+    - ``§`` — easy on many European keyboards (e.g. Shift+3 DE)
+    - ``>`` — easy on US/UK QWERTY (Shift+.) and common on DE layouts (``>`` key); not valid in Windows file names
+    - ASCII pipe ``|`` (unchanged; already splits later)
+    """
+    s = re.sub(r"(?i)\s+OR\s+", "|", chunk)
+    s = s.replace("§", "|")
+    s = s.replace(">", "|")
+    return s
+
+
+def _normalize_or_separators_outside_quotes(raw: str) -> str:
+    """Apply OR substitutions only outside '...' and \"...\" (literal § or OR inside quotes stays)."""
+    out: list[str] = []
+    pos = 0
+    for m in _QUOTED_SEARCH_SEGMENT.finditer(raw):
+        out.append(_apply_or_substitutions_unquoted(raw[pos : m.start()]))
+        out.append(m.group(0))
+        pos = m.end()
+    out.append(_apply_or_substitutions_unquoted(raw[pos:]))
+    return "".join(out)
+
+
+def _split_or_groups(raw: str) -> list[str]:
+    """Split OR-groups on ``|``, `` OR ``, ``§``, or ``>``."""
+    merged = _normalize_or_separators_outside_quotes(raw.strip())
+    return [g.strip() for g in merged.split("|") if g.strip()]
+
+
+def row_matches_search_filter(
+    filter_raw: str,
+    *,
+    file_path: str = "",
+    file_name: str = "",
+    new_leaf: str = "",
+) -> bool:
+    """
+    Tab 3 / Tab 4 list filter. Case-insensitive substring match unless a field prefix is used.
+
+    Syntax:
+    - Semicolon (;): AND between parts.
+    - OR between groups: ``|``, `` OR ``, ``§`` (e.g. Shift+3 DE), or ``>`` (e.g. Shift+. US; ``>`` key DE).
+    - Those markers inside ``"quotes"`` stay literal.
+    - No prefix: part may match file_path, file_name, or new_leaf (any).
+    - ``name:`` or ``file:`` — only the file name (leaf).
+    - ``path:`` or ``folder:`` — only the full path.
+    - ``new:`` or ``nl:`` — only the new file name column.
+    - Quotes ``"like this"`` strip to search that exact substring (spaces kept); works with or without a prefix.
+
+    Examples:
+    - ``name:vacation`` — filename must contain vacation, path is ignored for this part.
+    - ``name:"my clip"`` — filename must contain my clip.
+    - ``path:D:\\Work;name:1080`` — path contains D:\\Work and name contains 1080.
+    """
+    raw = (filter_raw or "").strip()
+    if not raw:
+        return True
+    fp_l = (file_path or "").lower()
+    fn_l = (file_name or "").lower()
+    nl_l = (new_leaf or "").lower()
+
+    def term_matches(part: str) -> bool:
+        field, text = _split_filter_field_term(part)
+        text = _unquote_search_phrase(text)
+        t = text.lower().strip()
+        if not t:
+            return field is None
+        if field == "path":
+            return t in fp_l
+        if field == "name":
+            return t in fn_l
+        if field == "new_leaf":
+            return t in nl_l
+        return t in fp_l or t in fn_l or t in nl_l
+
+    or_groups = _split_or_groups(raw)
+    if not or_groups:
+        return True
+    for group in or_groups:
+        parts = [p.strip() for p in group.split(";") if p.strip()]
+        if not parts:
+            continue
+        if all(term_matches(p) for p in parts):
+            return True
+    return False
+
+
+def filter_stub_for_subfolder_suggest(filter_raw: str) -> str:
+    """First AND-term of the first OR-group — used when deriving a subfolder label from the search box."""
+    raw = (filter_raw or "").strip()
+    if not raw:
+        return "moved"
+    groups = _split_or_groups(raw)
+    first_group = groups[0] if groups else ""
+    first_term = first_group.split(";", 1)[0].strip()
+    _field, text = _split_filter_field_term(first_term)
+    text = _unquote_search_phrase(text).strip()
+    return text if text else "moved"
+
+
 def normalize_commercial_at(s: str) -> str:
     """Map fullwidth/small @ to ASCII U+0040 (same glyph, different code point)."""
     t = s
@@ -734,189 +881,6 @@ def resolve_move_destination_root(base_folder: str, subfolder: str) -> tuple[Opt
     return final, None
 
 
-def _stash_scene_update_path(
-    stash_url: str,
-    api_key: str,
-    scene_id: str,
-    new_path: str,
-    graphql_path: str = "/graphql",
-    *,
-    timeout_sec: int = 60,
-) -> tuple[bool, str]:
-    """Update a scene path in Stash via GraphQL sceneUpdate mutation."""
-    gp = (graphql_path or "/graphql").strip()
-    if not gp.startswith("/"):
-        gp = "/" + gp
-    query = """
-mutation SceneUpdatePath($input: SceneUpdateInput!) {
-  sceneUpdate(input: $input) {
-    id
-    paths {
-      files
-    }
-  }
-}
-""".strip()
-    payload = {
-        "query": query,
-        "variables": {"input": {"id": scene_id, "path": new_path}},
-    }
-    parsed, err = _stash_graphql_json(stash_url, api_key, graphql_path, payload, timeout_sec=timeout_sec)
-    if parsed is None:
-        return False, err
-    if err:
-        low = err.lower()
-        if "unknown argument" in low or "cannot query field" in low or "unknown type" in low:
-            err += (
-                " | Possible GraphQL schema mismatch. Check GraphQL path and Stash version. "
-                "Run 'Probe sceneUpdate schema' in the GUI if introspection is enabled."
-            )
-        return False, err
-    scene = ((parsed.get("data") or {}).get("sceneUpdate") if isinstance(parsed, dict) else None)
-    if not scene:
-        return False, f"No sceneUpdate in response: {body[:500]}"
-    return True, "OK"
-
-
-def move_files_and_update_stash(
-    rows: list[dict[str, str]],
-    indices: list[int],
-    *,
-    target_folder: str,
-    subfolder: str = "",
-    stash_url: str,
-    api_key: str,
-    graphql_path: str = "/graphql",
-    dry_run: bool = False,
-    rollback_on_api_failure: bool = False,
-    per_source_subfolder: bool = False,
-) -> tuple[int, int, int, list[str]]:
-    """
-    Move filtered/selected files into target_folder and update Stash scene paths via sceneUpdate.
-    Returns (moved_count, stash_updated_count, skipped_count, log_lines).
-    """
-    log: list[str] = []
-    moved = 0
-    updated = 0
-    skipped = 0
-
-    sub = sanitize_windows_dir_component(subfolder)
-    if per_source_subfolder:
-        if not sub:
-            return 0, 0, len(indices), ["Per-source mode needs a valid subfolder name."]
-        target: Optional[Path] = None
-    else:
-        target, terr = resolve_move_destination_root(target_folder, subfolder)
-        if terr or target is None:
-            return 0, 0, len(indices), [terr or "Invalid target folder."]
-        try:
-            target.mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            return 0, 0, len(indices), [f"Cannot create target folder {target}: {e}"]
-
-    for i in indices:
-        if i < 0 or i >= len(rows):
-            skipped += 1
-            continue
-        row = rows[i]
-        raw_fp = (row.get("file_path") or "").strip()
-        scene_id = (row.get("scene_id") or "").strip()
-        if not raw_fp:
-            log.append("Skip: empty file_path.")
-            skipped += 1
-            continue
-        if not scene_id:
-            log.append(f"Skip (missing scene_id): {raw_fp}")
-            skipped += 1
-            continue
-
-        resolved = resolve_csv_path_to_existing_file(raw_fp)
-        if resolved is None:
-            log.append(f"Skip (not a file): {raw_fp!r}")
-            skipped += 1
-            continue
-
-        old_full = resolved
-        if per_source_subfolder:
-            target_dir = old_full.parent / sub
-            try:
-                target_dir.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                log.append(f"Cannot create per-source target folder {target_dir}: {e}")
-                skipped += 1
-                continue
-        else:
-            target_dir = target
-            if target_dir is None:
-                log.append("Internal error: target folder not resolved.")
-                skipped += 1
-                continue
-        dest_leaf = unique_leaf_in_dir(target_dir, old_full.name)
-        dest = target_dir / dest_leaf
-
-        if dry_run:
-            stash_path = str(dest).replace("\\", "/")
-            if rollback_on_api_failure:
-                log.append(
-                    f"[dry-run] move {old_full} -> {dest} and sceneUpdate(id={scene_id}, path={stash_path}); "
-                    "rollback enabled on API failure"
-                )
-            else:
-                log.append(
-                    f"[dry-run] move {old_full} -> {dest} and sceneUpdate(id={scene_id}, path={stash_path})"
-                )
-            moved += 1
-            updated += 1
-            continue
-
-        try:
-            shutil.move(str(old_full), str(dest))
-            moved += 1
-        except OSError as e:
-            log.append(f"Move failed: {old_full} -> {dest}: {e}")
-            skipped += 1
-            continue
-
-        stash_path = str(dest).replace("\\", "/")
-        ok, msg = _stash_scene_update_path(stash_url, api_key, scene_id, stash_path, graphql_path=graphql_path)
-        if not ok:
-            log.append(f"Stash update failed (scene_id={scene_id}, path={stash_path}): {msg}")
-            if rollback_on_api_failure:
-                try:
-                    shutil.move(str(dest), str(old_full))
-                    log.append(
-                        "Rollback OK: moved file back after API failure "
-                        f"(scene_id={scene_id}) -> {old_full}"
-                    )
-                    moved -= 1
-                except OSError as re:
-                    log.append(
-                        "Rollback failed after API failure "
-                        f"(scene_id={scene_id}): {dest} -> {old_full}: {re}"
-                    )
-                    skipped += 1
-                    row["file_path"] = str(dest)
-                    row["file_directory"] = str(dest.parent)
-                    row["file_name"] = dest.name
-                    row["new_leaf"] = ""
-                    continue
-                skipped += 1
-                row["file_path"] = str(old_full)
-                row["file_directory"] = str(old_full.parent)
-                row["file_name"] = old_full.name
-                continue
-        else:
-            updated += 1
-            log.append(f"OK: moved+updated scene_id={scene_id} -> {stash_path}")
-
-        row["file_path"] = str(dest)
-        row["file_directory"] = str(dest.parent)
-        row["file_name"] = dest.name
-        row["new_leaf"] = ""
-
-    return moved, updated, skipped, log
-
-
 def move_files_only(
     rows: list[dict[str, str]],
     indices: list[int],
@@ -1001,54 +965,6 @@ def move_files_only(
     return moved, skipped, log
 
 
-def update_stash_paths_for_rows(
-    rows: list[dict[str, str]],
-    indices: list[int],
-    *,
-    stash_url: str,
-    api_key: str,
-    graphql_path: str = "/graphql",
-    dry_run: bool = False,
-) -> tuple[int, int, list[str]]:
-    """
-    Update Stash scene paths from current row file_path values.
-    Returns (updated_count, skipped_count, log_lines).
-    """
-    log: list[str] = []
-    updated = 0
-    skipped = 0
-    for i in indices:
-        if i < 0 or i >= len(rows):
-            skipped += 1
-            continue
-        row = rows[i]
-        raw_fp = (row.get("file_path") or "").strip()
-        scene_id = (row.get("scene_id") or "").strip()
-        if not raw_fp:
-            log.append("Skip: empty file_path.")
-            skipped += 1
-            continue
-        if not scene_id:
-            log.append(f"Skip (missing scene_id): {raw_fp}")
-            skipped += 1
-            continue
-        resolved = resolve_csv_path_to_existing_file(raw_fp)
-        fp = str(resolved) if resolved is not None else raw_fp
-        stash_path = fp.replace("\\", "/")
-        if dry_run:
-            log.append(f"[dry-run] sceneUpdate(id={scene_id}, path={stash_path})")
-            updated += 1
-            continue
-        ok, msg = _stash_scene_update_path(stash_url, api_key, scene_id, stash_path, graphql_path=graphql_path)
-        if ok:
-            updated += 1
-            log.append(f"OK: scene_id={scene_id} path={stash_path}")
-        else:
-            skipped += 1
-            log.append(f"Stash update failed (scene_id={scene_id}, path={stash_path}): {msg}")
-    return updated, skipped, log
-
-
 def test_stash_graphql_connection(
     stash_url: str,
     api_key: str,
@@ -1070,7 +986,7 @@ def test_stash_graphql_connection(
     return True, f"GraphQL endpoint reachable: {url}"
 
 
-def probe_stash_scene_update_schema(
+def probe_stash_csv_export_schema(
     stash_url: str,
     api_key: str,
     graphql_path: str = "/graphql",
@@ -1078,76 +994,45 @@ def probe_stash_scene_update_schema(
     timeout_sec: int = 30,
 ) -> tuple[bool, str]:
     """
-    Use GraphQL introspection (if allowed) to check whether sceneUpdate and SceneUpdateInput.path
-    match what this tool expects. Returns (likely_compatible, human_message).
+    Same findScenes query shape as export_stash_files.ps1 (one page). If this succeeds, CSV export
+    from Stash should still work after a Stash update (for the user's "is my export broken?" check).
     """
-    q_mut = """
-query ProbeMutations {
-  __schema {
-    mutationType {
-      fields { name }
+    q = """
+query ProbeCsvExport($filter: FindFilterType) {
+  findScenes(filter: $filter) {
+    count
+    scenes {
+      id
+      title
+      files {
+        path
+      }
     }
   }
 }
 """.strip()
+    payload = {
+        "query": q,
+        "variables": {"filter": {"per_page": 1, "page": 1}},
+    }
     parsed, err = _stash_graphql_json(
-        stash_url, api_key, graphql_path, {"query": q_mut, "variables": {}}, timeout_sec=timeout_sec
+        stash_url, api_key, graphql_path, payload, timeout_sec=timeout_sec
     )
     if parsed is None:
-        return False, err
+        return False, err or "Request failed"
     if err:
-        low = err.lower()
-        if "introspection" in low or "not allowed" in low or "disabled" in low:
-            return False, (
-                f"Introspection blocked or failed: {err} "
-                "| Cannot auto-verify sceneUpdate. Compare your Stash version with this tool's mutation, "
-                "or check Stash's GraphQL schema in the official repo."
-            )
         return False, err
-
-    fields = (
-        (((parsed.get("data") or {}).get("__schema") or {}).get("mutationType") or {}).get("fields")
-        or []
+    data = parsed.get("data") if isinstance(parsed, dict) else None
+    if not isinstance(data, dict):
+        return False, "Unexpected response (no data object)."
+    fs = data.get("findScenes")
+    if not isinstance(fs, dict):
+        return False, "findScenes missing — export would fail."
+    if "scenes" not in fs:
+        return False, "findScenes.scenes missing — export would fail."
+    cnt = fs.get("count")
+    cnt_s = str(cnt) if cnt is not None else "?"
+    return (
+        True,
+        f"same fields as CSV export (id, title, files.path). Scene count from Stash: ~{cnt_s}.",
     )
-    mut_names = {str(f.get("name", "")) for f in fields if isinstance(f, dict)}
-    has_scene_update = "sceneUpdate" in mut_names
-
-    q_in = """
-query ProbeSceneUpdateInput {
-  __type(name: "SceneUpdateInput") {
-    inputFields { name }
-  }
-}
-""".strip()
-    parsed2, err2 = _stash_graphql_json(
-        stash_url, api_key, graphql_path, {"query": q_in, "variables": {}}, timeout_sec=timeout_sec
-    )
-    input_names: set[str] = set()
-    if parsed2 is not None and not err2:
-        ifields = ((parsed2.get("data") or {}).get("__type") or {}).get("inputFields") or []
-        input_names = {str(f.get("name", "")) for f in ifields if isinstance(f, dict)}
-
-    parts: list[str] = []
-    if has_scene_update:
-        parts.append("Mutation sceneUpdate: found.")
-    else:
-        parts.append("Mutation sceneUpdate: NOT found in introspection.")
-        if mut_names:
-            sample = sorted(mut_names)[:12]
-            parts.append(f"Sample mutation names: {', '.join(sample)}")
-
-    if input_names:
-        has_id = "id" in input_names
-        has_path = "path" in input_names
-        parts.append(
-            f"SceneUpdateInput fields: id={'yes' if has_id else 'NO'}, path={'yes' if has_path else 'NO'}."
-        )
-        ok = has_scene_update and has_id and has_path
-        return ok, " ".join(parts)
-    if err2:
-        parts.append(f"SceneUpdateInput introspection: {err2}")
-    else:
-        parts.append("SceneUpdateInput: type not found or has no inputFields.")
-
-    ok = has_scene_update and bool(input_names) and "id" in input_names and "path" in input_names
-    return ok, " ".join(parts)

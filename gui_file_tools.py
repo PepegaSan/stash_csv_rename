@@ -8,7 +8,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from tkinter import Menu, TclError, filedialog, Scrollbar, ttk
+from tkinter import Menu, TclError, filedialog, ttk
 
 import customtkinter as ctk
 
@@ -18,17 +18,17 @@ from file_rename_tools import (
     apply_file_renames,
     apply_find_replace_to_rows,
     apply_prefix_suffix_to_rows,
+    filter_stub_for_subfolder_suggest,
     move_files_only,
-    move_files_and_update_stash,
     read_rename_csv,
+    row_matches_search_filter,
     rename_folder_dangerous,
     resolve_csv_path_to_existing_file,
     resolve_move_destination_root,
     sanitize_windows_dir_component,
     scan_folder_files,
-    probe_stash_scene_update_schema,
+    probe_stash_csv_export_schema,
     test_stash_graphql_connection,
-    update_stash_paths_for_rows,
     unique_leaf_in_dir,
     write_rename_csv,
 )
@@ -40,9 +40,6 @@ _ROOT = Path(__file__).resolve().parent
 # Secondary / hint labels: (light appearance, dark appearance). CTk scroll areas use gray in light mode — avoid
 # theme grays like gray25/gray70 here or text disappears on the frame background.
 _LABEL_HINT = ("#1a1a1a", "#d0d0d0")
-# Stash hint strip (light gray frame in light mode needs a darker foreground)
-_LABEL_STASH_HINT = ("#4a3000", "#e8d4a0")
-
 # Scroll areas + labels: CTk "transparent" often paints wrong on scroll canvas in light mode (dark slabs).
 _UI_SURFACE = ("gray95", "gray17")
 
@@ -119,14 +116,10 @@ class FileToolsApp(ctk.CTk):
         self._t4_csv = ctk.StringVar(value=str(_default_file_tools_csv_dir() / "stash_files.csv"))
         self._t4_filter = ctk.StringVar(value="")
         self._t4_target_folder = ctk.StringVar(value="")
-        self._t4_stash_url = ctk.StringVar(value="http://127.0.0.1:9999")
-        self._t4_api = ctk.StringVar(value=os.environ.get("STASH_API_KEY", ""))
         self._t4_dry = ctk.BooleanVar(value=True)
-        self._t4_rollback = ctk.BooleanVar(value=True)
         self._t4_subfolder = ctk.StringVar(value="")
         self._t4_per_source = ctk.BooleanVar(value=False)
         self._t4_use_selected = ctk.BooleanVar(value=False)
-        self._t4_update_stash = ctk.BooleanVar(value=False)
         self._t4_preview_scheduled = False
         self._t4_after_id: str | None = None
         self._t4_trace_ids: list[tuple[ctk.Variable, str]] = []
@@ -193,14 +186,10 @@ class FileToolsApp(ctk.CTk):
         self._t4_csv = ctk.StringVar(value=self._t4_csv.get())
         self._t4_filter = ctk.StringVar(value=self._t4_filter.get())
         self._t4_target_folder = ctk.StringVar(value=self._t4_target_folder.get())
-        self._t4_stash_url = ctk.StringVar(value=self._t4_stash_url.get())
-        self._t4_api = ctk.StringVar(value=self._t4_api.get())
         self._t4_subfolder = ctk.StringVar(value=self._t4_subfolder.get())
         self._t4_dry = ctk.BooleanVar(value=self._t4_dry.get())
-        self._t4_rollback = ctk.BooleanVar(value=self._t4_rollback.get())
         self._t4_per_source = ctk.BooleanVar(value=self._t4_per_source.get())
         self._t4_use_selected = ctk.BooleanVar(value=self._t4_use_selected.get())
-        self._t4_update_stash = ctk.BooleanVar(value=self._t4_update_stash.get())
 
     def _remove_t4_traces(self) -> None:
         for v, tid in self._t4_trace_ids:
@@ -219,9 +208,7 @@ class FileToolsApp(ctk.CTk):
             self._t4_subfolder,
             self._t4_per_source,
             self._t4_use_selected,
-            self._t4_update_stash,
             self._t4_dry,
-            self._t4_rollback,
         ):
             self._t4_trace_ids.append((v, v.trace_add("write", cb)))
 
@@ -280,6 +267,18 @@ class FileToolsApp(ctk.CTk):
                     rowheight=22,
                 )
                 style.configure("Treeview.Heading", background="#d0d0d0", foreground="#1a1a1a")
+                style.configure(
+                    "Vertical.TScrollbar",
+                    background="#c4c4c4",
+                    troughcolor="#e8e8e8",
+                    arrowcolor="#1a1a1a",
+                )
+                style.configure(
+                    "Horizontal.TScrollbar",
+                    background="#c4c4c4",
+                    troughcolor="#e8e8e8",
+                    arrowcolor="#1a1a1a",
+                )
             else:
                 style.configure(
                     "Treeview",
@@ -289,8 +288,54 @@ class FileToolsApp(ctk.CTk):
                     rowheight=22,
                 )
                 style.configure("Treeview.Heading", background="#1f538d", foreground="#dce4ee")
+                style.configure(
+                    "Vertical.TScrollbar",
+                    background="#3d3d3d",
+                    troughcolor="#2b2b2b",
+                    arrowcolor="#dce4ee",
+                )
+                style.configure(
+                    "Horizontal.TScrollbar",
+                    background="#3d3d3d",
+                    troughcolor="#2b2b2b",
+                    arrowcolor="#dce4ee",
+                )
         except Exception:
             pass
+
+    def _bind_ttk_tree_mousewheel(self, tree: ttk.Treeview) -> None:
+        """Wheel over the list scrolls the tree, not the outer CTkScrollableFrame tab body."""
+
+        def on_wheel(event) -> str:
+            delta = getattr(event, "delta", 0) or 0
+            if sys.platform == "darwin":
+                tree.yview_scroll(int(-1 * delta), "units")
+            else:
+                tree.yview_scroll(int(-1 * (delta / 120)), "units")
+            return "break"
+
+        def on_linux_up(_event) -> str:
+            tree.yview_scroll(-1, "units")
+            return "break"
+
+        def on_linux_down(_event) -> str:
+            tree.yview_scroll(1, "units")
+            return "break"
+
+        tree.bind("<MouseWheel>", on_wheel)
+        tree.bind("<Button-4>", on_linux_up)
+        tree.bind("<Button-5>", on_linux_down)
+
+    def _place_ttk_tree_with_scrollbars(self, tree_frame: ctk.CTkFrame, tree: ttk.Treeview) -> None:
+        scroll_y = ttk.Scrollbar(tree_frame, orient="vertical", command=tree.yview)
+        scroll_x = ttk.Scrollbar(tree_frame, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        scroll_y.grid(row=0, column=1, sticky="ns")
+        scroll_x.grid(row=1, column=0, sticky="ew")
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+        self._bind_ttk_tree_mousewheel(tree)
 
     def _log(self, msg: str) -> None:
         self._log_box.configure(state="normal")
@@ -384,6 +429,48 @@ class FileToolsApp(ctk.CTk):
 
     def _pad(self) -> dict:
         return {"padx": 10, "pady": (4, 6)}
+
+    def _collapsible_section(
+        self,
+        parent: ctk.CTkFrame,
+        *,
+        title_key: str,
+        start_open: bool,
+    ) -> ctk.CTkFrame:
+        """Header toggles visibility of the returned frame (pack children into it)."""
+        pad = self._pad()
+        outer = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        outer.pack(fill="x", **pad)
+        open_flag = [start_open]
+        title_base = self._tr(title_key)
+        body = ctk.CTkFrame(outer, fg_color=_UI_SURFACE)
+        hdr = ctk.CTkButton(
+            outer,
+            text="",
+            anchor="w",
+            height=26,
+            corner_radius=6,
+            fg_color=("gray82", "gray28"),
+            hover_color=("gray72", "gray38"),
+            font=ctk.CTkFont(size=12),
+        )
+
+        def toggle() -> None:
+            open_flag[0] = not open_flag[0]
+            sym = "\u25bc " if open_flag[0] else "\u25b6 "
+            hdr.configure(text=f"{sym}{title_base}")
+            if open_flag[0]:
+                body.pack(fill="x", pady=(0, 2))
+            else:
+                body.pack_forget()
+
+        hdr.configure(command=toggle)
+        sym = "\u25bc " if start_open else "\u25b6 "
+        hdr.configure(text=f"{sym}{title_base}")
+        hdr.pack(fill="x", pady=(0, 2))
+        if start_open:
+            body.pack(fill="x", pady=(0, 2))
+        return body
 
     def _build_tab1(self, parent: ctk.CTkFrame) -> None:
         pad = self._pad()
@@ -489,10 +576,10 @@ class FileToolsApp(ctk.CTk):
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             bf,
-            text=self._tr("t1.check_path_update"),
-            width=_btn_w(self._tr("t1.check_path_update")),
+            text=self._tr("t1.check_csv_export"),
+            width=_btn_w(self._tr("t1.check_csv_export")),
             height=_BTN_H,
-            command=self._probe_stash_scene_update,
+            command=self._probe_stash_csv_export,
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             bf,
@@ -624,28 +711,34 @@ class FileToolsApp(ctk.CTk):
         ent.pack(side="left", fill="x", expand=True, padx=(0, 8))
         ent.bind("<KeyRelease>", lambda e: self._t3_rebuild_tree())
 
+        _label(
+            parent,
+            text=self._tr("common.search_syntax_hint"),
+            anchor="w",
+            justify="left",
+            wraplength=880,
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=11),
+        ).pack(fill="x", padx=10, pady=(0, 4))
+
         tree_frame = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
         tree_frame.pack(fill="both", expand=True, **pad)
         self._apply_ttk_treeview_style()
 
-        scroll_y = Scrollbar(tree_frame, orient="vertical")
         self._tree = ttk.Treeview(
             tree_frame,
             columns=("path", "name", "new_leaf"),
             show="headings",
             height=14,
-            yscrollcommand=scroll_y.set,
             selectmode="extended",
         )
-        scroll_y.config(command=self._tree.yview)
         self._tree.heading("path", text=self._tr("t3.col.path"))
         self._tree.heading("name", text=self._tr("t3.col.name"))
         self._tree.heading("new_leaf", text=self._tr("t3.col.new_leaf"))
-        self._tree.column("path", width=420, minwidth=80)
-        self._tree.column("name", width=160, minwidth=60)
-        self._tree.column("new_leaf", width=220, minwidth=60)
-        self._tree.pack(side="left", fill="both", expand=True)
-        scroll_y.pack(side="right", fill="y")
+        self._tree.column("path", width=420, minwidth=80, stretch=False)
+        self._tree.column("name", width=160, minwidth=60, stretch=False)
+        self._tree.column("new_leaf", width=220, minwidth=60, stretch=False)
+        self._place_ttk_tree_with_scrollbars(tree_frame, self._tree)
         self._tree.bind("<<TreeviewSelect>>", self._t3_on_select)
         self._tree.bind("<Double-1>", lambda e: self._t3_focus_edit_leaf())
         self._tree.bind("<Button-3>", self._t3_tree_context_menu)
@@ -668,14 +761,6 @@ class FileToolsApp(ctk.CTk):
             command=self._t3_open_selected_path,
         ).pack(side="left")
 
-        _label(
-            parent,
-            text=self._tr("t3.advanced_hint"),
-            anchor="w",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
-        ).pack(fill="x", **pad)
-
         edit_row = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
         edit_row.pack(fill="x", **pad)
         _label(edit_row, text=self._tr("t3.new_name_selected"), width=200, anchor="w").pack(side="left")
@@ -688,7 +773,8 @@ class FileToolsApp(ctk.CTk):
             command=self._t3_apply_leaf_selection,
         ).pack(side="right")
 
-        rule = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        batch_body = self._collapsible_section(parent, title_key="t3.section_batch_title", start_open=False)
+        rule = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE)
         rule.pack(fill="x", **pad)
         _label(rule, text=self._tr("common.prefix"), width=80, anchor="w").pack(side="left")
         ctk.CTkEntry(rule, textvariable=self._t3_prefix, width=120).pack(side="left", padx=(0, 12))
@@ -711,7 +797,7 @@ class FileToolsApp(ctk.CTk):
             command=self._t3_apply_rule_selected,
         ).pack(side="left")
 
-        fr_row = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        fr_row = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE)
         fr_row.pack(fill="x", **pad)
         _label(fr_row, text=self._tr("common.find"), width=80, anchor="w").pack(side="left")
         ctk.CTkEntry(fr_row, textvariable=self._t3_find, width=140).pack(side="left", padx=(0, 8))
@@ -739,7 +825,7 @@ class FileToolsApp(ctk.CTk):
             command=self._t3_apply_find_replace_selected,
         ).pack(side="left")
 
-        fr_hint = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        fr_hint = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE)
         fr_hint.pack(fill="x", padx=(0, 0), pady=(0, 4))
         _label(
             fr_hint,
@@ -749,7 +835,7 @@ class FileToolsApp(ctk.CTk):
             font=ctk.CTkFont(size=11),
         ).pack(side="left", padx=(80, 0))
 
-        ou = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        ou = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE)
         ou.pack(fill="x", **pad)
         _label(ou, text=self._tr("t3.limit_folder"), width=180, anchor="w").pack(side="left")
         ctk.CTkEntry(ou, textvariable=self._t3_only_under).pack(side="left", fill="x", expand=True, padx=(0, 8))
@@ -770,34 +856,14 @@ class FileToolsApp(ctk.CTk):
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             runf,
-            text=self._tr("t3.update_stash_search"),
-            width=_btn_w(self._tr("t3.update_stash_search")),
-            height=_BTN_H,
-            command=self._t3_run_stash_update_filtered,
-        ).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(
-            runf,
-            text=self._tr("t1.test_connection"),
-            width=_btn_w(self._tr("t1.test_connection")),
-            height=_BTN_H,
-            command=self._test_stash_connection,
-        ).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(
-            runf,
-            text=self._tr("t1.check_path_update"),
-            width=_btn_w(self._tr("t1.check_path_update")),
-            height=_BTN_H,
-            command=self._probe_stash_scene_update,
-        ).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(
-            runf,
             text=self._tr("t3.clear_new_names"),
             width=_btn_w(self._tr("t3.clear_new_names")),
             height=_BTN_H,
             command=self._t3_clear_filtered_leaves,
         ).pack(side="left")
 
-        warn_fr = ctk.CTkFrame(parent, fg_color=("#8b3a3a", "#5c1f1f"), corner_radius=8)
+        fold_body = self._collapsible_section(parent, title_key="t3.section_folder_title", start_open=False)
+        warn_fr = ctk.CTkFrame(fold_body, fg_color=("#8b3a3a", "#5c1f1f"), corner_radius=8)
         warn_fr.pack(fill="x", **pad)
         _label(
             warn_fr,
@@ -844,27 +910,13 @@ class FileToolsApp(ctk.CTk):
         pad = self._pad()
         _label(
             parent,
-            text=self._tr("t4.steps"),
+            text=self._tr("t4.intro_block"),
             anchor="w",
             wraplength=860,
             justify="left",
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=12),
         ).pack(fill="x", **pad)
-        _label(
-            parent,
-            text=self._tr("t4.hint_stash"),
-            anchor="w",
-            wraplength=860,
-            justify="left",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
-        ).pack(fill="x", padx=10, pady=(0, 4))
-        _label(
-            parent,
-            text=self._tr("t4.hint_csv"),
-            anchor="w",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
-        ).pack(fill="x", padx=10, pady=(0, 6))
 
         csv_row = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
         csv_row.pack(fill="x", **pad)
@@ -899,27 +951,33 @@ class FileToolsApp(ctk.CTk):
         ent4.pack(side="left", fill="x", expand=True, padx=(0, 8))
         ent4.bind("<KeyRelease>", lambda e: (self._t4_rebuild_tree(), self._t4_schedule_preview_refresh()))
 
+        _label(
+            parent,
+            text=self._tr("common.search_syntax_hint"),
+            anchor="w",
+            justify="left",
+            wraplength=880,
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=11),
+        ).pack(fill="x", padx=10, pady=(0, 4))
+
         tree_frame = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
         tree_frame.pack(fill="both", expand=True, **pad)
-        scroll_y = Scrollbar(tree_frame, orient="vertical")
+        self._apply_ttk_treeview_style()
         self._t4_tree = ttk.Treeview(
             tree_frame,
             columns=("path", "name", "scene_id"),
             show="headings",
             height=10,
-            yscrollcommand=scroll_y.set,
             selectmode="extended",
         )
-        scroll_y.config(command=self._t4_tree.yview)
         self._t4_tree.heading("path", text=self._tr("t3.col.path"))
         self._t4_tree.heading("name", text=self._tr("t3.col.name"))
         self._t4_tree.heading("scene_id", text=self._tr("t4.col.scene_id"))
-        self._t4_tree.column("path", width=420, minwidth=80)
-        self._t4_tree.column("name", width=180, minwidth=80)
-        self._t4_tree.column("scene_id", width=120, minwidth=60)
-        self._t4_tree.pack(side="left", fill="both", expand=True)
-        scroll_y.pack(side="right", fill="y")
-        self._apply_ttk_treeview_style()
+        self._t4_tree.column("path", width=420, minwidth=80, stretch=False)
+        self._t4_tree.column("name", width=180, minwidth=80, stretch=False)
+        self._t4_tree.column("scene_id", width=120, minwidth=60, stretch=False)
+        self._place_ttk_tree_with_scrollbars(tree_frame, self._t4_tree)
 
         self._t4_stats = _label(
             parent,
@@ -938,6 +996,13 @@ class FileToolsApp(ctk.CTk):
             textvariable=self._t4_target_folder,
             placeholder_text=self._tr("t4.where_placeholder"),
         ).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ctk.CTkButton(
+            tf,
+            text=self._tr("t4.target_from_row"),
+            width=_btn_w(self._tr("t4.target_from_row")),
+            height=_BTN_H,
+            command=self._t4_set_target_from_selected_row_folder,
+        ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             tf,
             text=self._tr("common.browse"),
@@ -962,15 +1027,18 @@ class FileToolsApp(ctk.CTk):
             command=self._t4_suggest_target_from_filtered,
         ).pack(side="right", padx=(8, 0))
 
+        path_tips_body = self._collapsible_section(
+            parent, title_key="t4.section_path_tips_title", start_open=False
+        )
         _label(
-            parent,
+            path_tips_body,
             text=self._tr("t4.move_hint"),
             anchor="w",
             wraplength=860,
             justify="left",
             text_color=_LABEL_HINT,
             font=ctk.CTkFont(size=12),
-        ).pack(fill="x", padx=10, pady=(0, 4))
+        ).pack(fill="x", **pad)
 
         mf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
         mf.pack(fill="x", **pad)
@@ -979,23 +1047,6 @@ class FileToolsApp(ctk.CTk):
             text=self._tr("t4.per_source"),
             variable=self._t4_per_source,
         ).pack(side="left")
-
-        for key, var, secret in (
-            ("common.stash_url", self._t4_stash_url, False),
-            ("common.api_key", self._t4_api, True),
-        ):
-            rr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-            rr.pack(fill="x", **pad)
-            _label(rr, text=self._tr(key), width=180, anchor="w").pack(side="left")
-            ctk.CTkEntry(rr, textvariable=var, show="*" if secret else None).pack(side="left", fill="x", expand=True)
-
-        _label(
-            parent,
-            text=self._tr("t4.tip_settings"),
-            anchor="w",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
-        ).pack(fill="x", padx=10, pady=(0, 4))
 
         runf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
         runf.pack(fill="x", **pad)
@@ -1009,24 +1060,6 @@ class FileToolsApp(ctk.CTk):
             text=self._tr("t4.selected_only"),
             variable=self._t4_use_selected,
         ).pack(side="left", padx=(0, 12))
-        ctk.CTkCheckBox(
-            runf,
-            text=self._tr("t4.update_stash_after"),
-            variable=self._t4_update_stash,
-        ).pack(side="left", padx=(0, 12))
-        ctk.CTkCheckBox(
-            runf,
-            text=self._tr("t4.rollback"),
-            variable=self._t4_rollback,
-        ).pack(side="left")
-        self._t4_stash_hint = _label(
-            parent,
-            text=self._tr("t4.stash_id_hint"),
-            anchor="w",
-            text_color=_LABEL_STASH_HINT,
-            font=ctk.CTkFont(size=12),
-        )
-        self._t4_stash_hint.pack(fill="x", padx=10, pady=(0, 4))
 
         b = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
         b.pack(fill="x", **pad)
@@ -1047,9 +1080,11 @@ class FileToolsApp(ctk.CTk):
         )
         self._t4_plan.pack(side="left", padx=(12, 0))
 
-        _label(parent, text=self._tr("t4.preview_title"), anchor="w").pack(fill="x", **pad)
-        pv_btns = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        pv_btns.pack(fill="x", padx=10, pady=(0, 4))
+        preview_body = self._collapsible_section(
+            parent, title_key="t4.preview_section_title", start_open=True
+        )
+        pv_btns = ctk.CTkFrame(preview_body, fg_color=_UI_SURFACE)
+        pv_btns.pack(fill="x", **pad)
         ctk.CTkButton(
             pv_btns,
             text=self._tr("t4.refresh_preview"),
@@ -1057,7 +1092,7 @@ class FileToolsApp(ctk.CTk):
             height=_BTN_H,
             command=self._t4_refresh_preview,
         ).pack(side="left")
-        self._t4_preview = ctk.CTkTextbox(parent, height=180, activate_scrollbars=True)
+        self._t4_preview = ctk.CTkTextbox(preview_body, height=130, activate_scrollbars=True)
         self._t4_preview.pack(fill="both", expand=False, **pad)
         self._t4_preview.configure(state="disabled")
 
@@ -1256,19 +1291,39 @@ class FileToolsApp(ctk.CTk):
         if p:
             self._t4_target_folder.set(p)
 
+    def _t4_set_target_from_selected_row_folder(self) -> None:
+        """Fill move-target field with the parent directory of a selected list row (first selected)."""
+        indices = self._t4_selected_indices()
+        if not indices:
+            self._log(self._tr("log.t4_target_folder_select_row"))
+            return
+        row = self._t4_rows[indices[0]]
+        fp = (row.get("file_path") or "").strip()
+        if not fp:
+            self._log(self._tr("log.t4_target_folder_no_path"))
+            return
+        resolved = resolve_csv_path_to_existing_file(fp)
+        path_obj = resolved if resolved is not None else Path(fp)
+        parent = path_obj.parent
+        self._t4_target_folder.set(str(parent))
+        if len(indices) > 1:
+            self._log(self._tr("log.t4_target_folder_multi", n=len(indices), path=parent))
+        else:
+            self._log(self._tr("log.t4_target_folder_set", path=parent))
+        self._t4_schedule_preview_refresh()
+
     def _browse_t4_csv(self) -> None:
         p = filedialog.askopenfilename(filetypes=[("CSV", "*.csv"), ("All", "*.*")])
         if p:
             self._t4_csv.set(p)
 
     def _t4_row_visible(self, row: dict[str, str]) -> bool:
-        q = self._t4_filter.get().strip().lower()
-        if not q:
-            return True
-        fp = (row.get("file_path") or "").lower()
-        fn = (row.get("file_name") or "").lower()
-        nl = (row.get("new_leaf") or "").lower()
-        return q in fp or q in fn or q in nl
+        return row_matches_search_filter(
+            self._t4_filter.get(),
+            file_path=row.get("file_path", ""),
+            file_name=row.get("file_name", ""),
+            new_leaf=row.get("new_leaf", ""),
+        )
 
     def _t4_rebuild_tree(self) -> None:
         if not hasattr(self, "_t4_tree"):
@@ -1330,7 +1385,7 @@ class FileToolsApp(ctk.CTk):
             self._log(self._tr("log.t4_suggest_no_paths"))
             return
 
-        sub = sanitize_windows_dir_component(self._t4_filter.get().strip()) or "moved"
+        sub = sanitize_windows_dir_component(filter_stub_for_subfolder_suggest(self._t4_filter.get())) or "moved"
         parent_strs = sorted({str(p) for p in parents})
         base = Path(parent_strs[0])
         if len(parent_strs) > 1:
@@ -1474,12 +1529,6 @@ class FileToolsApp(ctk.CTk):
                     lines.append(err or self._tr("log.t4_invalid_target"))
                 else:
                     lines.append(self._tr("log.t4_dest_root", root=root_p))
-                    lines.append(
-                        self._tr(
-                            "log.t4_stash_path_line",
-                            p=str(root_p).replace(chr(92), "/"),
-                        )
-                    )
                     lines.append("")
                     cap = 200
                     for i in filtered[:cap]:
@@ -1517,14 +1566,6 @@ class FileToolsApp(ctk.CTk):
                 if self._t4_use_selected.get()
                 else self._tr("plan.source.all_search")
             )
-            stash_mode = (
-                self._tr("plan.stash.move_update")
-                if self._t4_update_stash.get()
-                else self._tr("plan.stash.move_only")
-            )
-            rollback_mode = (
-                self._tr("plan.roll.back") if self._t4_rollback.get() else self._tr("plan.roll.no")
-            )
             run_mode = self._tr("plan.run.preview") if self._t4_dry.get() else self._tr("plan.run.real")
             place_mode = (
                 self._tr("plan.place.next") if self._t4_is_per_source_mode() else self._tr("plan.place.one")
@@ -1535,8 +1576,6 @@ class FileToolsApp(ctk.CTk):
                     run=run_mode,
                     source=source_mode,
                     place=place_mode,
-                    stash=stash_mode,
-                    rollback=rollback_mode,
                 )
             )
 
@@ -1571,13 +1610,12 @@ class FileToolsApp(ctk.CTk):
             self._log(self._tr("log.save_failed", e=e))
 
     def _t3_row_visible(self, row: dict[str, str]) -> bool:
-        q = self._t3_filter.get().strip().lower()
-        if not q:
-            return True
-        fp = (row.get("file_path") or "").lower()
-        fn = (row.get("file_name") or "").lower()
-        nl = (row.get("new_leaf") or "").lower()
-        return q in fp or q in fn or q in nl
+        return row_matches_search_filter(
+            self._t3_filter.get(),
+            file_path=row.get("file_path", ""),
+            file_name=row.get("file_name", ""),
+            new_leaf=row.get("new_leaf", ""),
+        )
 
     def _t3_rebuild_tree(self) -> None:
         for item in self._tree.get_children():
@@ -1868,43 +1906,6 @@ class FileToolsApp(ctk.CTk):
         self._t3_rebuild_tree()
         self._save_settings()
 
-    def _t3_run_stash_update_filtered(self) -> None:
-        if not self._rows:
-            self._log(self._tr("log.load_csv_first"))
-            return
-        indices: list[int] = []
-        for item in self._tree.get_children():
-            try:
-                indices.append(int(item))
-            except ValueError:
-                continue
-        if not indices:
-            self._log(self._tr("log.t3_stash_no_items"))
-            return
-        stash_url = self._t1_url.get().strip() or "http://127.0.0.1:9999"
-        api_key = self._t1_api.get().strip()
-        dry = self._t3_dry.get()
-        self._log(self._tr("log.t3_stash_header"))
-        updated, skipped, lines = update_stash_paths_for_rows(
-            self._rows,
-            indices,
-            stash_url=stash_url,
-            api_key=api_key,
-            graphql_path=(self._t1_graphql_path.get().strip() or "/graphql"),
-            dry_run=dry,
-        )
-        for line in lines:
-            self._log(line + "\n")
-        self._log(
-            self._tr(
-                "log.t3_stash_done",
-                preview=self._tr("log.preview_prefix") if dry else "",
-                updated=updated,
-                skipped=skipped,
-            ),
-        )
-        self._save_settings()
-
     def _t3_run_folder_rename(self) -> None:
         if not self._t3_fold_confirm.get():
             self._log(self._tr("log.fold_confirm_first"))
@@ -1919,55 +1920,6 @@ class FileToolsApp(ctk.CTk):
         self._log(self._tr("log.fold_result", msg=msg))
         if ok:
             self._t3_fold_confirm.set(False)
-        self._save_settings()
-
-    def _t4_run_move_indices(self, indices: list[int], mode_label: str) -> None:
-        if not self._t4_rows:
-            self._log(self._tr("log.t4_load_first"))
-            return
-        if not indices:
-            self._log(self._tr("log.t4_no_items_mode", mode=mode_label))
-            return
-        target = self._t4_target_folder.get().strip()
-        per_source = self._t4_is_per_source_mode()
-        if not per_source:
-            if not target:
-                self._log(self._tr("log.t4_need_dest"))
-                return
-            if not Path(target).is_absolute():
-                self._log(self._tr("log.t4_dest_absolute", target=target))
-                return
-        stash_url = self._t4_stash_url.get().strip() or "http://127.0.0.1:9999"
-        api_key = self._t4_api.get().strip()
-        dry = self._t4_dry.get()
-        rollback = self._t4_rollback.get()
-
-        self._log(self._tr("log.t4_move_stash_header", mode=mode_label))
-        moved, updated, skipped, lines = move_files_and_update_stash(
-            self._t4_rows,
-            indices,
-            target_folder=target,
-            subfolder=self._t4_subfolder.get(),
-            stash_url=stash_url,
-            api_key=api_key,
-            graphql_path=(self._t1_graphql_path.get().strip() or "/graphql"),
-            dry_run=dry,
-            rollback_on_api_failure=rollback,
-            per_source_subfolder=per_source,
-        )
-        for line in lines:
-            self._log(line + "\n")
-        self._log(
-            self._tr(
-                "log.t4_move_stash_done",
-                preview=self._tr("log.preview_prefix") if dry else "",
-                moved=moved,
-                updated=updated,
-                skipped=skipped,
-            ),
-        )
-        self._t4_rebuild_tree()
-        self._t4_refresh_preview()
         self._save_settings()
 
     def _t4_run_move_only_indices(self, indices: list[int], mode_label: str) -> None:
@@ -2014,28 +1966,7 @@ class FileToolsApp(ctk.CTk):
         use_selected = self._t4_use_selected.get()
         indices = self._t4_selected_indices() if use_selected else self._t4_filtered_indices()
         label = self._tr("mode.selected_items") if use_selected else self._tr("mode.search_matches")
-        if self._t4_update_stash.get():
-            with_scene = 0
-            missing_scene = 0
-            for i in indices:
-                if 0 <= i < len(self._t4_rows) and (self._t4_rows[i].get("scene_id") or "").strip():
-                    with_scene += 1
-                else:
-                    missing_scene += 1
-            if with_scene == 0:
-                self._log(self._tr("log.t4_stash_no_scene"))
-                return
-            if missing_scene > 0:
-                self._log(
-                    self._tr(
-                        "log.t4_stash_partial",
-                        with_scene=with_scene,
-                        missing=missing_scene,
-                    ),
-                )
-            self._t4_run_move_indices(indices, label)
-        else:
-            self._t4_run_move_only_indices(indices, label)
+        self._t4_run_move_only_indices(indices, label)
 
     def _test_stash_connection(self) -> None:
         stash_url = self._t1_url.get().strip() or "http://127.0.0.1:9999"
@@ -2045,13 +1976,19 @@ class FileToolsApp(ctk.CTk):
         ok, msg = test_stash_graphql_connection(stash_url, api_key, graphql_path=gql)
         self._log(self._tr("log.ok_prefix" if ok else "log.fail_prefix") + msg + "\n")
 
-    def _probe_stash_scene_update(self) -> None:
+    def _probe_stash_csv_export(self) -> None:
         stash_url = self._t1_url.get().strip() or "http://127.0.0.1:9999"
         api_key = self._t1_api.get().strip()
         gql = self._t1_graphql_path.get().strip() or "/graphql"
-        self._log(self._tr("log.probe_stash", url=stash_url, gql=gql))
-        ok, msg = probe_stash_scene_update_schema(stash_url, api_key, graphql_path=gql)
-        self._log(self._tr("log.compat_prefix" if ok else "log.check_prefix") + msg + "\n")
+        self._log(self._tr("log.probe_csv_export", url=stash_url, gql=gql))
+        csv_ok, csv_detail = probe_stash_csv_export_schema(stash_url, api_key, graphql_path=gql)
+        self._log(
+            self._tr(
+                "log.export_line_ok" if csv_ok else "log.export_line_fail",
+                detail=csv_detail,
+            )
+            + "\n"
+        )
 
     def _open_settings_dialog(self) -> None:
         if self._settings_dialog is not None:
@@ -2182,8 +2119,6 @@ class FileToolsApp(ctk.CTk):
             self._t1_url.set(url.get())
             self._t1_api.set(api.get())
             self._t1_graphql_path.set(gql.get())
-            self._t4_stash_url.set(url.get())
-            self._t4_api.set(api.get())
 
             new_lang = self._norm_lang_code(lang_choice.get())
             self._ui_language.set(new_lang)
@@ -2242,12 +2177,8 @@ class FileToolsApp(ctk.CTk):
             "t4_target_folder": self._t4_target_folder.get(),
             "t4_subfolder": self._t4_subfolder.get(),
             "t4_per_source": self._t4_per_source.get(),
-            "t4_stash_url": self._t4_stash_url.get(),
-            "t4_api": self._t4_api.get(),
             "t4_dry": self._t4_dry.get(),
-            "t4_rollback": self._t4_rollback.get(),
             "t4_use_selected": self._t4_use_selected.get(),
-            "t4_update_stash": self._t4_update_stash.get(),
             "ui_language": self._ui_language.get(),
         }
 
@@ -2296,12 +2227,8 @@ class FileToolsApp(ctk.CTk):
         g("t4_target_folder", self._t4_target_folder)
         g("t4_subfolder", self._t4_subfolder)
         g("t4_per_source", self._t4_per_source)
-        g("t4_stash_url", self._t4_stash_url)
-        g("t4_api", self._t4_api)
         g("t4_dry", self._t4_dry)
-        g("t4_rollback", self._t4_rollback)
         g("t4_use_selected", self._t4_use_selected)
-        g("t4_update_stash", self._t4_update_stash)
         g("ui_language", self._ui_language)
         am = (self._appearance_mode.get() or "dark").strip().lower()
         if am not in ("dark", "light", "system"):

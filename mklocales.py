@@ -40,6 +40,13 @@ row("common.save_log", "Save log to file…", "Protokoll speichern…", "Guardar
 row("common.clear_log", "Clear log", "Protokoll leeren", "Vaciar registro", "Vider le journal")
 row("common.csv_file", "CSV file", "CSV-Datei", "Archivo CSV", "Fichier CSV")
 row("common.search", "Search", "Suche", "Buscar", "Recherche")
+row(
+    "common.search_syntax_hint",
+    "Syntax: name: / path: / new: = only that column · ; = and · > or § or | or OR = or · \"phrase\" = exact text",
+    "Kurz: name: / path: / new: = nur diese Spalte · ; = und · > (oft Umschalt+.) oder § (Umschalt+3) oder | oder OR = oder · \"Text\" = genauer Suchtext",
+    "Resumen: name: / path: / new: = solo esa columna · ; = y · > o § o | o OR = alternativas · \"texto\" = texto exacto",
+    "Syntaxe : name: / path: / new: = cette colonne seulement · ; = et · > ou § ou | ou OR = ou · « phrase » = texte exact",
+)
 row("common.stash_url", "Stash URL", "Stash-URL", "URL de Stash", "URL Stash")
 row("common.api_key", "API key (if login enabled)", "API-Schlüssel (falls Login aktiv)", "Clave API (si hay inicio de sesión)", "Clé API (si connexion activée)")
 row("common.find", "Find", "Suchen", "Buscar", "Rechercher")
@@ -80,10 +87,10 @@ row(
 )
 row(
     "t1.hint_settings",
-    "Theme and column separator (; or ,) for saved CSV files, plus Stash URL/API (Tab 1 + Tab 4): ⚙ top-right. Tabs 3 and 4 detect ; or , when you load a file. Saved CSVs use UTF-8 with BOM for Excel.",
-    "Design und Spaltentrenner (; oder ,) für gespeicherte CSVs sowie Stash-URL/API (Tab 1 + Tab 4): ⚙ oben rechts. Tabs 3 und 4 erkennen ; oder , beim Laden. Gespeicherte CSVs: UTF-8 mit BOM für Excel.",
-    "Tema y separador de columnas (; o ,) para CSV guardados y URL/API de Stash (pestañas 1 y 4): ⚙ arriba a la derecha. Las pestañas 3 y 4 detectan ; o , al cargar. CSV guardados: UTF-8 con BOM para Excel.",
-    "Thème et séparateur de colonnes (; ou ,) pour les CSV enregistrés, plus URL/API Stash (onglets 1 et 4) : ⚙ en haut à droite. Les onglets 3 et 4 détectent ; ou , à l’ouverture. CSV enregistrés : UTF-8 avec BOM pour Excel.",
+    "Theme and column separator (; or ,) for saved CSV files, plus Stash URL/API for Tab 1 export: ⚙ top-right. Tabs 3 and 4 detect ; or , when you load a file. Saved CSVs use UTF-8 with BOM for Excel.",
+    "Design und Spaltentrenner (; oder ,) für gespeicherte CSVs sowie Stash-URL/API für Tab-1-Export: ⚙ oben rechts. Tabs 3 und 4 erkennen ; oder , beim Laden. Gespeicherte CSVs: UTF-8 mit BOM für Excel.",
+    "Tema y separador (; o ,) para CSV guardados y URL/API de Stash para export en pestaña 1: ⚙ arriba a la derecha. Las pestañas 3 y 4 detectan ; o , al cargar. CSV: UTF-8 con BOM para Excel.",
+    "Thème et séparateur (; ou ,) pour les CSV enregistrés, plus URL/API Stash pour l’export (onglet 1) : ⚙ en haut à droite. Les onglets 3 et 4 détectent ; ou , à l’ouverture. CSV : UTF-8 avec BOM pour Excel.",
 )
 row("t1.batch_size", "Batch size (scenes per request)", "Stapelgröße (Szenen pro Anfrage)", "Tamaño de lote (escenas por solicitud)", "Taille du lot (scènes par requête)")
 row("t1.filters_title", "Optional filters (all boxes must match)", "Optionale Filter (alle Felder müssen passen)", "Filtros opcionales (todas las casillas deben coincidir)", "Filtres optionnels (toutes les cases doivent correspondre)")
@@ -93,7 +100,13 @@ row("t1.name_contains", "File name contains", "Dateiname enthält", "El nombre d
 row("t1.name_regex", "File name — regex (PowerShell)", "Dateiname — Regex (PowerShell)", "Nombre de archivo — regex (PowerShell)", "Nom de fichier — regex (PowerShell)")
 row("t1.run_export", "Run Stash export", "Stash-Export starten", "Ejecutar exportación Stash", "Lancer l’export Stash")
 row("t1.test_connection", "Test Stash connection", "Stash-Verbindung testen", "Probar conexión con Stash", "Tester la connexion Stash")
-row("t1.check_path_update", "Check path-update support", "Pfad-Update-Unterstützung prüfen", "Comprobar soporte de actualización de rutas", "Vérifier la prise en charge MAJ chemins")
+row(
+    "t1.check_csv_export",
+    "Check CSV export (GraphQL)",
+    "CSV-Export prüfen (GraphQL)",
+    "Comprobar exportación CSV (GraphQL)",
+    "Vérifier export CSV (GraphQL)",
+)
 row("t1.open_out_folder", "Open output folder", "Ausgabeordner öffnen", "Abrir carpeta de salida", "Ouvrir le dossier de sortie")
 row("t1.send_csv_to", "Send CSV to", "CSV senden an", "Enviar CSV a", "Envoyer le CSV vers")
 row("t1.tab3_rename", "Tab 3 — rename", "Tab 3 — Umbenennen", "Pestaña 3 — renombrar", "Onglet 3 — renommer")
@@ -130,10 +143,24 @@ row("t2.run_scan", "Run disk scan", "Datenträger-Scan starten", "Escanear disco
 # Tab 3
 row(
     "t3.steps",
-    "Steps: 1) Load CSV  2) Use Search to narrow the list  3) Keep Preview only checked to try safely  4) Rename files on disk.\nEverything under \"Advanced (optional)\" is extra — you can skip it for simple renames.",
-    "Schritte: 1) CSV laden  2) Suche nutzen  3) „Nur Vorschau“ zum Testen anlassen  4) Dateien auf der Festplatte umbenennen.\nAlles unter „Erweitert (optional)“ ist Zusatz — für einfache Umbenennungen kannst du es weglassen.",
-    "Pasos: 1) Cargar CSV  2) Usar búsqueda  3) Dejar solo vista previa para probar  4) Renombrar archivos en disco.\nTodo bajo «Avanzado (opcional)» es extra — puedes omitirlo para renombres simples.",
-    "Étapes : 1) Charger le CSV  2) Affiner avec Recherche  3) Garder Aperçu seulement pour tester  4) Renommer les fichiers sur disque.\nTout sous « Avancé (optionnel) » est en plus — vous pouvez l’ignorer pour des renommages simples.",
+    "Steps: 1) Load CSV  2) Search  3) Preview only to test  4) Rename on disk.\nBatch tools (prefix, find/replace, folder limit) sit under “Batch rules” below — open when needed. Stash connection check / CSV export test: Tab 1.",
+    "Schritte: 1) CSV laden  2) Suche  3) „Nur Vorschau“ zum Testen  4) Auf der Festplatte umbenennen.\nBatch-Werkzeuge (Präfix, Suchen/Ersetzen, Ordnerlimit) stehen unter „Batch-Regeln“ — bei Bedarf aufklappen. Stash-Verbindung / CSV-Export-Test: Tab 1.",
+    "Pasos: 1) Cargar CSV  2) Buscar  3) Vista previa para probar  4) Renombrar en disco.\nHerramientas por lotes (prefijo, buscar/reemplazar, límite de carpeta): «Reglas por lotes» — ábrelo si lo necesitas. Prueba de Stash / export CSV: pestaña 1.",
+    "Étapes : 1) Charger le CSV  2) Recherche  3) Aperçu seulement pour tester  4) Renommer sur disque.\nOutils groupés (préfixe, rechercher/remplacer, limite de dossier) : section « Règles groupées » — ouvrez si besoin. Test Stash / export CSV : onglet 1.",
+)
+row(
+    "t3.section_batch_title",
+    "Batch rules (prefix, find/replace, folder limit)",
+    "Batch-Regeln (Präfix, Suchen/Ersetzen, Ordnerlimit)",
+    "Reglas por lotes (prefijo, buscar/reemplazar, límite de carpeta)",
+    "Règles groupées (préfixe, rechercher/remplacer, limite de dossier)",
+)
+row(
+    "t3.section_folder_title",
+    "Rename folder on disk (dangerous) — click to open",
+    "Ordner auf der Festplatte umbenennen (gefährlich) — zum Öffnen klicken",
+    "Renombrar carpeta en disco (peligroso) — pulsar para abrir",
+    "Renommer un dossier sur disque (dangereux) — cliquer pour ouvrir",
 )
 row(
     "t3.hint_csv",
@@ -143,13 +170,19 @@ row(
     "Chargement : ; ou , lu dans le fichier. Enregistrement : séparateur des ⚙ réglages (; ou ,).",
 )
 row("t3.save_csv", "Save CSV", "CSV speichern", "Guardar CSV", "Enregistrer CSV")
-row("t3.search_label", "Search (matching items stay visible)", "Suche (passende Einträge bleiben sichtbar)", "Búsqueda (los elementos coincidentes siguen visibles)", "Recherche (les éléments correspondants restent visibles)")
+row(
+    "t3.search_label",
+    "Search (matching items stay visible)",
+    "Suche (passende Einträge bleiben sichtbar)",
+    "Búsqueda (los coincidentes siguen visibles)",
+    "Recherche (les éléments correspondants restent visibles)",
+)
 row(
     "t3.filter_placeholder",
-    "path, file name, or new file name…",
-    "Pfad, Dateiname oder neuer Dateiname…",
-    "ruta, nombre de archivo o nuevo nombre…",
-    "chemin, nom de fichier ou nouveau nom…",
+    "e.g. name:vacation  or  name:\"my clip\"  or  path:4K;name:foo",
+    "z. B. name:Urlaub  oder  name:\"mein clip\"  oder  path:4K;name:foo",
+    "p. ej. name:vacaciones  o  name:\"mi clip\"  o  path:4K;name:foo",
+    "ex. name:vacances  ou  name:\"mon clip\"  ou  path:4K;name:foo",
 )
 row("t3.col.path", "Full path", "Voller Pfad", "Ruta completa", "Chemin complet")
 row("t3.col.name", "Current file name", "Aktueller Dateiname", "Nombre de archivo actual", "Nom de fichier actuel")
@@ -157,13 +190,6 @@ row("t3.col.new_leaf", "New file name", "Neuer Dateiname", "Nuevo nombre de arch
 row("t3.selected", "Selected:", "Ausgewählt:", "Seleccionado:", "Sélection :")
 row("t3.copy_folder", "Copy folder path", "Ordnerpfad kopieren", "Copiar ruta de carpeta", "Copier le chemin du dossier")
 row("t3.open_explorer", "Open in Explorer", "Im Explorer öffnen", "Abrir en el Explorador", "Ouvrir dans l’Explorateur")
-row(
-    "t3.advanced_hint",
-    "Advanced (optional): build or edit \"New file name\" before you rename on disk.",
-    "Erweitert (optional): „Neuer Dateiname“ vor dem Umbenennen auf der Festplatte bearbeiten.",
-    "Avanzado (opcional): crear o editar «Nuevo nombre de archivo» antes de renombrar en disco.",
-    "Avancé (optionnel) : définir ou modifier « Nouveau nom de fichier » avant le renommage sur disque.",
-)
 row("t3.new_name_selected", "New file name (selected items)", "Neuer Dateiname (ausgewählte Einträge)", "Nuevo nombre (elementos seleccionados)", "Nouveau nom (éléments sélectionnés)")
 row("t3.apply_selected", "Apply to selected items", "Auf ausgewählte Einträge anwenden", "Aplicar a elementos seleccionados", "Appliquer aux éléments sélectionnés")
 row("t3.suffix_before_ext", "Suffix (before .ext)", "Suffix (vor .ext)", "Sufijo (antes de .ext)", "Suffixe (avant .ext)")
@@ -181,7 +207,6 @@ row(
 row("t3.limit_folder", "Limit to folder (optional)", "Auf Ordner beschränken (optional)", "Limitar a carpeta (opcional)", "Limiter au dossier (optionnel)")
 row("t3.preview_only", "Preview only (no changes on disk)", "Nur Vorschau (keine Änderungen auf der Festplatte)", "Solo vista previa (sin cambios en disco)", "Aperçu seulement (aucun changement sur disque)")
 row("t3.rename_disk", "Rename files on disk", "Dateien auf der Festplatte umbenennen", "Renombrar archivos en disco", "Renommer les fichiers sur disque")
-row("t3.update_stash_search", "Update Stash paths (search matches)", "Stash-Pfade aktualisieren (Suchtreffer)", "Actualizar rutas Stash (coincidencias)", "Mettre à jour chemins Stash (résultats)")
 row("t3.clear_new_names", 'Clear "New file name" on search matches', "„Neuer Dateiname“ bei Suchtreffern leeren", "Borrar «nuevo nombre» en coincidencias", "Effacer « nouveau nom » sur les résultats")
 row(
     "t3.folder_warn",
@@ -208,25 +233,18 @@ row(
 
 # Tab 4 (part 1)
 row(
-    "t4.steps",
-    "Steps (Stash not required for moving files): 1) Load CSV  2) Search  3) Set where files should go (folder below + optional Subfolder)  4) Keep Preview only checked to verify  5) Move files (search matches or selected items).",
-    "Schritte (Stash nicht nötig zum Verschieben): 1) CSV laden  2) Suche  3) Ziel setzen (Ordner unten + optionaler Unterordner)  4) „Nur Vorschau“ zur Kontrolle  5) Dateien verschieben (Suchtreffer oder Auswahl).",
-    "Pasos (Stash no obligatorio para mover): 1) Cargar CSV  2) Buscar  3) Definir destino (carpeta + subcarpeta opcional)  4) Vista previa para comprobar  5) Mover archivos (coincidencias o selección).",
-    "Étapes (Stash non requis pour déplacer) : 1) Charger le CSV  2) Recherche  3) Définir la cible (dossier + sous-dossier optionnel)  4) Aperçu seulement pour vérifier  5) Déplacer (résultats recherche ou sélection).",
+    "t4.intro_block",
+    "A) Load CSV, search, set the move folder (optional subfolder), use Preview only first, then move.\nB) The CSV path is your file list, not the move target. When loading, ; or , is read from the file; CSV export uses the separator in ⚙ Settings. Stash URL / API / GraphQL for exports: ⚙ Settings.\nC) After moves, if Stash already knew those files: run Tasks → Scan. This tab does not call the Stash API.",
+    "A) CSV laden, suchen, Zielordner setzen (optionaler Unterordner), zuerst „Nur Vorschau“, dann verschieben.\nB) Der CSV-Pfad ist die Dateiliste, nicht das Verschiebeziel. Beim Laden werden ; oder , aus der Datei gelesen; CSV-Export nutzt den Trenner aus ⚙ Einstellungen. Stash-URL / API / GraphQL für Exporte: ⚙ Einstellungen.\nC) Nach dem Verschieben, wenn Stash die Dateien kannte: Tasks → Scan. Dieser Tab ruft die Stash-API nicht auf.",
+    "A) Cargar CSV, buscar, carpeta destino (subcarpeta opcional), vista previa primero, luego mover.\nB) La ruta del CSV es la lista de archivos, no el destino. Al cargar se leen ; o , del archivo; al exportar CSV se usa el separador de ⚙ Ajustes. URL / API / GraphQL de Stash para exportes: ⚙ Ajustes.\nC) Tras mover, si Stash ya indexó esos archivos: Tasks → Scan. Esta pestaña no llama a la API de Stash.",
+    "A) Charger le CSV, recherche, dossier cible (sous-dossier optionnel), aperçu d’abord, puis déplacer.\nB) Le chemin CSV est la liste des fichiers, pas la cible. Au chargement, ; ou , vient du fichier ; à l’export CSV, le séparateur vient des ⚙ réglages. URL / API / GraphQL Stash pour l’export : ⚙ Réglages.\nC) Après déplacement, si Stash connaissait déjà ces fichiers : Tasks → Scan. Cet onglet n’appelle pas l’API Stash.",
 )
 row(
-    "t4.hint_stash",
-    "Updating Stash is optional: turn on \"Update Stash paths after move\" only if the CSV has a scene_id column (from a Stash export) and you want Stash updated right away.",
-    "Stash zu aktualisieren ist optional: „Stash-Pfade nach Verschieben aktualisieren“ nur einschalten, wenn die CSV eine scene_id-Spalte hat (Stash-Export) und Stash sofort angepasst werden soll.",
-    "Actualizar Stash es opcional: activa «Actualizar rutas Stash tras mover» solo si el CSV tiene scene_id (export Stash) y quieres actualizar ya.",
-    "Mettre à jour Stash est optionnel : activez « Mettre à jour les chemins Stash après déplacement » seulement si le CSV a scene_id (export Stash) et que vous voulez une MAJ immédiate.",
-)
-row(
-    "t4.hint_csv",
-    "Load: ; or , is read from the file. Export: separator from ⚙ Settings (; or ,).",
-    "Laden: ; oder , aus der Datei. Export: Trenner aus ⚙ Einstellungen (; oder ,).",
-    "Cargar: ; o , del archivo. Exportar: separador desde ⚙ Ajustes (; o ,).",
-    "Chargement : ; ou , dans le fichier. Export : séparateur des ⚙ réglages (; ou ,).",
+    "t4.section_path_tips_title",
+    "Path tips (target vs list, subfolder, selected row…)",
+    "Pfad-Hinweise (Ziel vs Liste, Unterordner, markierte Zeile …)",
+    "Consejos de rutas (destino vs lista, subcarpeta, fila seleccionada…)",
+    "Astuces chemins (cible vs liste, sous-dossier, ligne sélectionnée…)",
 )
 row("t4.export_csv", "Export CSV…", "CSV exportieren…", "Exportar CSV…", "Exporter CSV…")
 row("t4.col.scene_id", "Stash scene ID (scene_id)", "Stash-Szenen-ID (scene_id)", "ID de escena Stash (scene_id)", "ID scène Stash (scene_id)")
@@ -239,6 +257,13 @@ row(
     "p. ej. D:\\Archivo — todos los archivos movidos van aquí (salvo la casilla de abajo)",
     "ex. D:\\Archive — tous les fichiers déplacés vont ici (sauf la case ci-dessous)",
 )
+row(
+    "t4.target_from_row",
+    "Use selected row's folder",
+    "Ordner aus markierter Zeile",
+    "Carpeta de la fila seleccionada",
+    "Dossier de la ligne sélectionnée",
+)
 row("t4.subfolder_label", "Subfolder under that path (optional)", "Unterordner unter diesem Pfad (optional)", "Subcarpeta bajo esa ruta (opcional)", "Sous-dossier sous ce chemin (optionnel)")
 row(
     "t4.sub_placeholder",
@@ -250,10 +275,10 @@ row(
 row("t4.suggest", "Suggest from search matches", "Aus Suchtreffern vorschlagen", "Sugerir desde coincidencias", "Suggérer depuis la recherche")
 row(
     "t4.move_hint",
-    "Default: every file you move is placed inside “Where to move files”, plus “Subfolder under that path” if you filled it (that folder is created if needed). The CSV path at the top is only the list — not the move target.",
-    "Standard: jede verschobene Datei landet in „Wohin verschieben“, plus „Unterordner darunter“, falls ausgefüllt (Ordner wird angelegt). Der CSV-Pfad oben ist nur die Liste — kein Ziel.",
-    "Por defecto: cada archivo va a «Dónde mover», más «Subcarpeta» si la rellenas (se crea si hace falta). La ruta CSV arriba es solo la lista, no el destino.",
-    "Par défaut : chaque fichier va dans « Où déplacer », plus « Sous-dossier » si renseigné (créé si besoin). Le chemin CSV en haut est seulement la liste, pas la cible.",
+    "Default: every file you move is placed inside “Where to move files”, plus “Subfolder under that path” if you filled it (that folder is created if needed). The CSV path at the top is only the list — not the move target. Tip: “Use selected row's folder” (next to Browse) copies the parent folder of a file you selected in the list into the move target.",
+    "Standard: jede verschobene Datei landet in „Wohin verschieben“, plus „Unterordner darunter“, falls ausgefüllt (Ordner wird angelegt). Der CSV-Pfad oben ist nur die Liste — kein Ziel. Tipp: „Ordner aus markierter Zeile“ (neben Durchsuchen) übernimmt den Ordner der markierten Datei aus der Liste.",
+    "Por defecto: cada archivo va a «Dónde mover», más «Subcarpeta» si la rellenas (se crea si hace falta). La ruta CSV arriba es solo la lista, no el destino. Consejo: «Carpeta de la fila seleccionada» (junto a Examinar) copia la carpeta superior del archivo seleccionado al destino.",
+    "Par défaut : chaque fichier va dans « Où déplacer », plus « Sous-dossier » si renseigné (créé si besoin). Le chemin CSV en haut est seulement la liste, pas la cible. Astuce : « Dossier de la ligne sélectionnée » (à côté de Parcourir) met le dossier parent du fichier sélectionné dans la cible.",
 )
 row(
     "t4.per_source",
@@ -263,18 +288,11 @@ row(
     "Sinon : à côté du dossier actuel de chaque fichier — ignore « Où déplacer » ; chaque fichier vers <son dossier>\\Sous-dossier\\",
 )
 row(
-    "t4.tip_settings",
-    "Tip: use ⚙ Settings to set URL and API for Tab 1 and Tab 4 together. GraphQL path is always from Tab 1.",
-    "Tipp: ⚙ Einstellungen für URL/API von Tab 1 und Tab 4 gemeinsam. GraphQL-Pfad kommt immer aus Tab 1.",
-    "Consejo: ⚙ Ajustes para URL/API de pestañas 1 y 4 juntas. La ruta GraphQL siempre es de la pestaña 1.",
-    "Astuce : ⚙ réglages pour URL/API des onglets 1 et 4. Le chemin GraphQL vient toujours de l’onglet 1.",
-)
-row(
     "t4.preview_only",
-    "Preview only (no moves, no Stash update — log what would happen)",
-    "Nur Vorschau (kein Verschieben, kein Stash-Update — protokolliert geplante Aktionen)",
-    "Solo vista previa (sin mover ni actualizar Stash — registra lo planeado)",
-    "Aperçu seulement (pas de déplacement ni MAJ Stash — journal des actions prévues)",
+    "Preview only (no moves — log what would happen)",
+    "Nur Vorschau (kein Verschieben — protokolliert geplante Aktionen)",
+    "Solo vista previa (sin mover — registra lo planeado)",
+    "Aperçu seulement (pas de déplacement — journal des actions prévues)",
 )
 row(
     "t4.selected_only",
@@ -283,18 +301,15 @@ row(
     "Solo elementos seleccionados (si no, todos los que coinciden)",
     "Seulement les éléments sélectionnés (sinon tout ce qui correspond à Recherche)",
 )
-row("t4.update_stash_after", "Update Stash paths after move", "Stash-Pfade nach Verschieben aktualisieren", "Actualizar rutas Stash tras mover", "Mettre à jour chemins Stash après déplacement")
-row("t4.rollback", "Move file back if updating Stash fails", "Datei zurück, wenn Stash-Update fehlschlägt", "Volver a mover si falla actualización Stash", "Remettre le fichier si échec MAJ Stash")
-row(
-    "t4.stash_id_hint",
-    "Hint: Stash updates need a scene_id value on each item (Stash export) and a running Stash server you can reach.",
-    "Hinweis: Stash-Updates brauchen scene_id pro Eintrag (Stash-Export) und einen erreichbaren Stash-Server.",
-    "Aviso: actualizar Stash requiere scene_id en cada elemento (export Stash) y un servidor Stash accesible.",
-    "Indice : les MAJ Stash nécessitent scene_id par élément (export Stash) et un serveur Stash joignable.",
-)
 row("t4.move_disk", "Move files on disk", "Dateien auf Festplatte verschieben", "Mover archivos en disco", "Déplacer les fichiers sur disque")
 row("t4.plan_empty", "Plan: —", "Plan: —", "Plan: —", "Plan : —")
-row("t4.preview_title", "Preview (first items that match Search)", "Vorschau (erste Einträge der Suche)", "Vista previa (primeros elementos de la búsqueda)", "Aperçu (premiers éléments correspondant à Recherche)")
+row(
+    "t4.preview_section_title",
+    "Move preview (first matching items — click to show or hide)",
+    "Verschiebe-Vorschau (erste Treffer — zum Ein-/Ausblenden klicken)",
+    "Vista previa de movimiento (primeras coincidencias — clic para mostrar/ocultar)",
+    "Aperçu du déplacement (premières correspondances — clic pour afficher/masquer)",
+)
 row("t4.refresh_preview", "Refresh preview", "Vorschau aktualisieren", "Actualizar vista previa", "Actualiser l’aperçu")
 
 # Settings
@@ -329,22 +344,22 @@ row(
     "Al abrir un CSV, ; o , se detectan automáticamente del archivo.",
     "À l’ouverture d’un CSV, ; ou , est détecté automatiquement dans le fichier.",
 )
-row("settings.stash_group", "Stash (Tab 1 + Tab 4)", "Stash (Tab 1 + Tab 4)", "Stash (pestaña 1 + 4)", "Stash (onglets 1 + 4)")
+row("settings.stash_group", "Stash (Tab 1 export)", "Stash (Tab-1-Export)", "Stash (export pestaña 1)", "Stash (export onglet 1)")
 row(
     "settings.stash_hint",
-    "Saving applies URL and API key to both Tab 1 and Tab 4. GraphQL path is shared everywhere.",
-    "Speichern übernimmt URL und API-Schlüssel für Tab 1 und Tab 4. GraphQL-Pfad ist überall gleich.",
-    "Al guardar se aplican URL y clave API a pestañas 1 y 4. La ruta GraphQL es compartida.",
-    "Enregistrer applique URL et clé API aux onglets 1 et 4. Le chemin GraphQL est partout le même.",
+    "Used for Tab 1 export and the “Check CSV export” button (same URL, API key, GraphQL path).",
+    "Für Tab-1-Export und den Button „CSV-Export prüfen“ (dieselbe URL, API-Schlüssel, GraphQL-Pfad).",
+    "Para export en pestaña 1 y «Comprobar exportación CSV» (misma URL, API y GraphQL).",
+    "Pour l’export onglet 1 et « Vérifier export CSV » (même URL, clé API, chemin GraphQL).",
 )
 row("settings.graphql_path_label", "GraphQL path (empty = /graphql)", "GraphQL-Pfad (leer = /graphql)", "Ruta GraphQL (vacío = /graphql)", "Chemin GraphQL (vide = /graphql)")
 row("settings.graphql_clear", "GraphQL default (clear)", "GraphQL-Standard (leeren)", "GraphQL predeterminado (borrar)", "GraphQL par défaut (effacer)")
 row(
     "settings.saved_log",
-    "Settings saved (appearance, column separator for CSV saves, Stash URL/API/GraphQL for all tabs).",
-    "Einstellungen gespeichert (Erscheinungsbild, CSV-Trenner, Stash-URL/API/GraphQL für alle Tabs).",
-    "Ajustes guardados (apariencia, separador CSV, URL/API/GraphQL Stash para todas las pestañas).",
-    "Réglages enregistrés (apparence, séparateur CSV, URL/API/GraphQL Stash pour tous les onglets).",
+    "Settings saved (appearance, column separator for CSV saves, Stash URL/API/GraphQL for export).",
+    "Einstellungen gespeichert (Erscheinungsbild, CSV-Trenner, Stash-URL/API/GraphQL für Export).",
+    "Ajustes guardados (apariencia, separador CSV, URL/API/GraphQL Stash para export).",
+    "Réglages enregistrés (apparence, séparateur CSV, URL/API/GraphQL Stash pour l’export).",
 )
 
 # Dialog titles
@@ -379,6 +394,34 @@ row("log.t1_push_fail", "Tab 1: run export first or set a valid output CSV.\n", 
 row("log.t2_push_fail", "Tab 2: run a scan first or set a valid output CSV.\n", "Tab 2: zuerst scannen oder gültige Ausgabe-CSV setzen.\n", "Tab 2: ejecute escaneo o CSV de salida válido.\n", "Tab 2 : lancez l’analyse ou définissez un CSV de sortie valide.\n")
 row("log.t4_suggest_no_match", "Tab 4 suggest: no items match the current search.\n", "Tab 4 Vorschlag: keine Treffer für die aktuelle Suche.\n", "Tab 4 sugerencia: ningún elemento coincide con la búsqueda.\n", "Tab 4 suggestion : aucun élément ne correspond à la recherche.\n")
 row("log.t4_suggest_no_paths", "Tab 4 suggest: no usable source paths.\n", "Tab 4 Vorschlag: keine brauchbaren Quellpfade.\n", "Tab 4 sugerencia: sin rutas de origen usables.\n", "Tab 4 suggestion : pas de chemins source utilisables.\n")
+row(
+    "log.t4_target_folder_select_row",
+    "Tab 4: select one or more rows in the list first, then click again.\n",
+    "Tab 4: bitte zuerst eine oder mehrere Zeilen in der Liste markieren, dann erneut klicken.\n",
+    "Tab 4: primero selecciona una o más filas en la lista y vuelve a pulsar.\n",
+    "Tab 4 : sélectionnez d’abord une ou plusieurs lignes dans la liste, puis recliquez.\n",
+)
+row(
+    "log.t4_target_folder_no_path",
+    "Tab 4: selected row has no file_path.\n",
+    "Tab 4: markierte Zeile hat keinen file_path.\n",
+    "Tab 4: la fila seleccionada no tiene file_path.\n",
+    "Tab 4 : la ligne sélectionnée n’a pas de file_path.\n",
+)
+row(
+    "log.t4_target_folder_set",
+    "Tab 4: move target set to: {path}\n",
+    "Tab 4: Zielordner gesetzt auf: {path}\n",
+    "Tab 4: destino de movimiento: {path}\n",
+    "Tab 4 : cible de déplacement : {path}\n",
+)
+row(
+    "log.t4_target_folder_multi",
+    "Tab 4: {n} rows selected — using parent folder of the first selected row: {path}\n",
+    "Tab 4: {n} Zeilen markiert — es wird der Ordner der ersten markierten Zeile verwendet: {path}\n",
+    "Tab 4: {n} filas seleccionadas — se usa la carpeta superior de la primera fila: {path}\n",
+    "Tab 4 : {n} lignes sélectionnées — dossier parent de la première ligne : {path}\n",
+)
 row("log.t4_mixed_drives", "Tab 4 suggest: mixed drives/roots detected, using first source root.\n", "Tab 4 Vorschlag: verschiedene Laufwerke/Wurzeln — erste Quelle genutzt.\n", "Tab 4: varias unidades/raíces; se usa la primera.\n", "Tab 4 : lecteurs/racines mixtes, utilisation de la première source.\n")
 row(
     "log.t4_suggest_per_source",
@@ -453,18 +496,11 @@ row(
     "{fp} (fichier introuvable — aperçu sur le nom seulement)",
 )
 row(
-    "log.t4_stash_path_line",
-    "Path written to Stash (forward slashes, for the database): {p}/…",
-    "In Stash geschriebener Pfad (Schrägstriche, für die DB): {p}/…",
-    "Ruta escrita en Stash (barras, para la BD): {p}/…",
-    "Chemin écrit dans Stash (slashes, pour la base) : {p}/…",
-)
-row(
     "log.t4_plan",
-    "Plan: {run} · {source} · {place} · {stash} · {rollback}",
-    "Plan: {run} · {source} · {place} · {stash} · {rollback}",
-    "Plan: {run} · {source} · {place} · {stash} · {rollback}",
-    "Plan : {run} · {source} · {place} · {stash} · {rollback}",
+    "Plan: {run} · {source} · {place}",
+    "Plan: {run} · {source} · {place}",
+    "Plan: {run} · {source} · {place}",
+    "Plan : {run} · {source} · {place}",
 )
 row("plan.run.preview", "preview only", "nur Vorschau", "solo vista previa", "aperçu seulement")
 row("plan.run.real", "apply for real", "wirklich ausführen", "aplicar de verdad", "exécution réelle")
@@ -472,10 +508,6 @@ row("plan.source.selected", "selected items only", "nur Auswahl", "solo seleccio
 row("plan.source.all_search", "all items matching Search", "alle Suchtreffer", "todos los que coinciden", "tout ce qui correspond à Recherche")
 row("plan.place.next", "next to each file's folder", "neben Ordner jeder Datei", "junto a carpeta de cada archivo", "à côté du dossier de chaque fichier")
 row("plan.place.one", "one destination folder", "ein Zielordner", "una carpeta de destino", "un dossier de destination")
-row("plan.stash.move_update", "move files + update Stash", "verschieben + Stash aktualiser", "mover + actualizar Stash", "déplacer + MAJ Stash")
-row("plan.stash.move_only", "move files only", "nur verschieben", "solo mover", "déplacement seulement")
-row("plan.roll.back", "move back if Stash update fails", "zurück bei Stash-Fehler", "volver si falla Stash", "retour si échec MAJ Stash")
-row("plan.roll.no", "no automatic undo", "kein automatisches Rückgängig", "sin deshacer automático", "pas d’annulation auto")
 row("log.t3_need_csv", "Tab 3: set a valid CSV path.\n", "Tab 3: gültigen CSV-Pfad setzen.\n", "Tab 3: ruta CSV válida.\n", "Tab 3 : chemin CSV valide.\n")
 row("log.csv_read_fail", "Failed to read CSV: {e}\n", "CSV lesen fehlgeschlagen: {e}\n", "Error al leer CSV: {e}\n", "Échec lecture CSV : {e}\n")
 row(
@@ -549,15 +581,6 @@ row(
     "\n{preview}Traité : {renamed} renommage(s), {skipped} ignorés.\n",
 )
 row("log.preview_prefix", "Preview only — ", "Nur Vorschau — ", "Solo vista previa — ", "Aperçu seulement — ")
-row("log.t3_stash_no_items", "No items matching Search to update.\n", "Keine Suchtreffer zum Aktualisieren.\n", "No hay coincidencias para actualizar.\n", "Aucun résultat de recherche à mettre à jour.\n")
-row("log.t3_stash_header", "\n--- Tab 3: Stash update (search matches) ---\n", "\n--- Tab 3: Stash-Update (Suchtreffer) ---\n", "\n--- Tab 3: actualización Stash (coincidencias) ---\n", "\n--- Tab 3 : MAJ Stash (résultats recherche) ---\n")
-row(
-    "log.t3_stash_done",
-    "\n{preview}Processed: stash updated {updated}, skipped {skipped}.\n",
-    "\n{preview}Verarbeitet: Stash aktualisiert {updated}, {skipped} übersprungen.\n",
-    "\n{preview}Procesado: Stash actualizado {updated}, omitidos {skipped}.\n",
-    "\n{preview}Traité : Stash mis à jour {updated}, {skipped} ignorés.\n",
-)
 row("log.fold_confirm_first", "Folder rename: enable the confirmation checkbox first.\n", "Ordner umbenennen: zuerst Bestätigung aktivieren.\n", "Renombrar carpeta: active la confirmación primero.\n", "Renommage dossier : cochez d’abord la confirmation.\n")
 row("log.fold_need_values", "Folder rename: set folder and new name.\n", "Ordner umbenennen: Ordner und neuen Namen setzen.\n", "Renombrar carpeta: indique carpeta y nombre.\n", "Renommage dossier : dossier et nouveau nom requis.\n")
 row("log.fold_result", "Folder rename: {msg}\n", "Ordner umbenennen: {msg}\n", "Renombrar carpeta: {msg}\n", "Renommage dossier : {msg}\n")
@@ -578,20 +601,6 @@ row(
     "Tab 4 : destination = chemin complet depuis la lettre de lecteur, reçu : {target!r}\n",
 )
 row(
-    "log.t4_move_stash_header",
-    "\n--- Tab 4: move + stash update ({mode}) ---\n",
-    "\n--- Tab 4: Verschieben + Stash-Update ({mode}) ---\n",
-    "\n--- Tab 4: mover + actualizar Stash ({mode}) ---\n",
-    "\n--- Tab 4 : déplacement + MAJ Stash ({mode}) ---\n",
-)
-row(
-    "log.t4_move_stash_done",
-    "\n{preview}Processed: moved {moved}, stash updated {updated}, skipped {skipped}.\n",
-    "\n{preview}Verarbeitet: verschoben {moved}, Stash {updated}, übersprungen {skipped}.\n",
-    "\n{preview}Procesado: movidos {moved}, Stash {updated}, omitidos {skipped}.\n",
-    "\n{preview}Traité : déplacés {moved}, Stash {updated}, ignorés {skipped}.\n",
-)
-row(
     "log.t4_move_only_header",
     "\n--- Tab 4: move only ({mode}) ---\n",
     "\n--- Tab 4: nur Verschieben ({mode}) ---\n",
@@ -606,20 +615,6 @@ row(
     "\n{preview}Traité : déplacés {moved}, ignorés {skipped}.\n",
 )
 row(
-    "log.t4_stash_no_scene",
-    "Tab 4: Update Stash is on, but none of the target items have a scene_id value.\nLoad a CSV exported from Stash (it includes scene_id), or turn off \"Update Stash paths after move\".\n",
-    "Tab 4: Stash-Update ist an, aber kein Zieleintrag hat scene_id.\nCSV aus Stash exportieren (enthält scene_id) oder „Stash nach Verschieben“ aus.\n",
-    "Tab 4: actualizar Stash activado, pero ningún elemento tiene scene_id.\nCargue CSV exportado de Stash o desactive actualizar rutas.\n",
-    "Tab 4 : MAJ Stash activée, mais aucun élément cible n’a de scene_id.\nChargez un CSV exporté depuis Stash ou désactivez la MAJ des chemins.\n",
-)
-row(
-    "log.t4_stash_partial",
-    "Tab 4 note: Update Stash is on. {with_scene} item(s) have scene_id; {missing} item(s) have no scene_id and will be skipped.\n",
-    "Tab 4: Stash-Update an. {with_scene} mit scene_id; {missing} ohne scene_id werden übersprungen.\n",
-    "Tab 4: {with_scene} con scene_id; {missing} sin scene_id se omitirán.\n",
-    "Tab 4 : {with_scene} avec scene_id ; {missing} sans scene_id seront ignorés.\n",
-)
-row(
     "log.test_stash",
     "\n--- Test Stash connection ({url}{gql}) ---\n",
     "\n--- Stash-Verbindung testen ({url}{gql}) ---\n",
@@ -629,14 +624,26 @@ row(
 row("log.ok_prefix", "OK: ", "OK: ", "OK: ", "OK : ")
 row("log.fail_prefix", "FAIL: ", "FEHLER: ", "FALLO: ", "ÉCHEC : ")
 row(
-    "log.probe_stash",
-    "\n--- Check path-update support ({url}{gql}) ---\n",
-    "\n--- Pfad-Update prüfen ({url}{gql}) ---\n",
-    "\n--- Comprobar actualización de rutas ({url}{gql}) ---\n",
-    "\n--- Vérification MAJ chemins ({url}{gql}) ---\n",
+    "log.probe_csv_export",
+    "\n--- Check Stash CSV export ({url}{gql}) ---\n",
+    "\n--- Stash-CSV-Export prüfen ({url}{gql}) ---\n",
+    "\n--- Comprobar exportación CSV Stash ({url}{gql}) ---\n",
+    "\n--- Vérifier export CSV Stash ({url}{gql}) ---\n",
 )
-row("log.compat_prefix", "COMPATIBLE: ", "KOMPATIBEL: ", "COMPATIBLE: ", "COMPATIBLE : ")
-row("log.check_prefix", "CHECK: ", "PRÜFUNG: ", "REVISAR: ", "VÉRIF. : ")
+row(
+    "log.export_line_ok",
+    "OK — {detail}",
+    "OK — {detail}",
+    "OK — {detail}",
+    "OK — {detail}",
+)
+row(
+    "log.export_line_fail",
+    "FAIL — {detail}",
+    "FEHLER — {detail}",
+    "FALLO — {detail}",
+    "ÉCHEC — {detail}",
+)
 
 # mode labels passed to logs (already translated)
 row("mode.selected_items", "selected items", "ausgewählte Einträge", "elementos seleccionados", "éléments sélectionnés")

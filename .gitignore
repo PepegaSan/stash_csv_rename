@@ -20,6 +20,9 @@ gui_file_tools_settings.json
 # Generated CSVs / exports (your media paths)
 file_tools_csv/
 
+# Any CSV in the repo tree (path lists — do not publish)
+*.csv
+
 # Tooling / IDEs
 .idea/
 .vscode/
