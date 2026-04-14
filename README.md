@@ -15,6 +15,16 @@ Small helper around **[Stash](https://github.com/stashapp/stash)**: export file 
 - **Optional for Tab 5 resolution:** `ffprobe` must be installed and available in `PATH` (typically from ffmpeg builds)
 - Launch: **`start_file_tools.bat`** or `python gui_file_tools.py`
 
+### Windows portable executable (.exe)
+
+There is **no guaranteed pre-built binary in this repo** (GitHub Releases are optional). To build **`Stashmarker.exe`** yourself on Windows:
+
+1. Install **Python 3.10+** and ensure `python` is on `PATH`.
+2. Run **`build_exe.bat`** in the repository root. It installs dependencies, runs **PyInstaller** using **`stashmarker.spec`**, and writes **`dist\Stashmarker.exe`**.
+3. Copy **`Stashmarker.exe`** wherever you like. On first run it creates **`gui_file_tools_settings.json`**, **`schema_rename_presets.json`**, and **`file_tools_csv\`** **next to the .exe** (same as the script-based install).
+
+Maintainers can also use **Actions → “Build Windows exe”** (workflow dispatch) to produce a downloadable **artifact** without a local PyInstaller install.
+
 **UI (current state):** slimmer and optimized for daily use. Redundant button rows were removed (Explorer stays in the right-click menu), Tab 5 tag slots use placeholders instead of extra labels, and the ffprobe action sits directly next to the resolution options.
 
 **Tab 2:** Scan a folder on disk (no Stash), same CSV shape as Tab 1.  
@@ -83,8 +93,11 @@ All `*.csv` files anywhere in the tree are ignored so path lists are harder to c
 | `apply_stash_file_renames.ps1` | Rename from CSV (CLI) |
 | `install.bat` | Install / upgrade `pip` and dependencies |
 | `start_file_tools.bat` | Windows launcher |
+| `build_exe.bat` | Build `dist\Stashmarker.exe` (PyInstaller) |
+| `stashmarker.spec` | PyInstaller bundle definition (locales, themes, `export_stash_files.ps1`) |
+| `requirements-build.txt` | Extra deps to build the `.exe` (PyInstaller) |
 
-Generated locally (not committed): `file_tools_csv/`, `gui_file_tools_settings.json`, `schema_rename_presets.json` — see `.gitignore`.
+Generated locally (not committed): `file_tools_csv/`, `gui_file_tools_settings.json`, `schema_rename_presets.json`, `build/`, `dist/` — see `.gitignore`.
 
 ## License
 

@@ -38,10 +38,28 @@ from file_rename_tools import (
     write_rename_csv,
 )
 
-_SETTINGS_PATH = Path(__file__).resolve().parent / "gui_file_tools_settings.json"
-_SCHEMA_PRESETS_PATH = Path(__file__).resolve().parent / "schema_rename_presets.json"
-_DEFAULT_STASH_PS1 = Path(__file__).resolve().parent / "export_stash_files.ps1"
-_ROOT = Path(__file__).resolve().parent
+def _app_dir() -> Path:
+    """Folder next to the app for writable files (settings, presets, CSV output)."""
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent
+
+
+def _resource_dir() -> Path:
+    """Bundled read-only assets (locales, themes, export script) — PyInstaller extract dir or dev tree."""
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
+    return Path(__file__).resolve().parent
+
+
+_APP_DIR = _app_dir()
+_RES_DIR = _resource_dir()
+
+_SETTINGS_PATH = _APP_DIR / "gui_file_tools_settings.json"
+_SCHEMA_PRESETS_PATH = _APP_DIR / "schema_rename_presets.json"
+_DEFAULT_STASH_PS1 = _RES_DIR / "export_stash_files.ps1"
 
 _FILTER_FIELD_KEYS_TAB34: tuple[str, ...] = (
     "all",
@@ -68,7 +86,7 @@ _UI_SURFACE = ("gray95", "gray17")
 # CTkEntry hint text: default theme color is often too close to typed text / background.
 _ENTRY_PLACEHOLDER_TEXT_COLOR = ("#6a6a6a", "#a3a3a3")
 
-_CTK_SOFT_THEME_JSON = _ROOT / "themes" / "blue_soft.json"
+_CTK_SOFT_THEME_JSON = _RES_DIR / "themes" / "blue_soft.json"
 
 
 def _load_customtkinter_theme() -> None:
@@ -98,7 +116,7 @@ def _btn_w(s: str, *, lo: int = 40, hi: int = 420) -> int:
 
 
 def _default_file_tools_csv_dir() -> Path:
-    d = _ROOT / "file_tools_csv"
+    d = _APP_DIR / "file_tools_csv"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -211,7 +229,7 @@ class FileToolsApp(ctk.CTk):
         self._settings_dialog: ctk.CTkToplevel | None = None
 
         self._load_settings()
-        self._translator = Translator(_ROOT / "locales", self._norm_lang_code(self._ui_language.get()))
+        self._translator = Translator(_RES_DIR / "locales", self._norm_lang_code(self._ui_language.get()))
         self.title(self._tr("app.window_title"))
         self._build_ui()
         self._apply_user_appearance_setting()
