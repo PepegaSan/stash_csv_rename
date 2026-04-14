@@ -47,20 +47,20 @@ row(
     "Resumen: name: / path: / new: / title: / tags: / markers: = solo esa columna (new: = «nuevo nombre» del CSV, vacío hasta rellenar; title: = título o nombre de archivo sin extensión si título vacío) · ; = y · > § | OR = o · \"texto\" = exacto",
     "Syntaxe : name: / path: / new: / title: / tags: / markers: = cette colonne (new: = colonne « nouveau nom », souvent vide ; title: = titre scène ou nom de fichier sans extension si titre vide) · ; = et · > § | OR = ou · « phrase » = exact",
 )
-row("common.exclude_filter", "Exclude (hide rows)", "Ausschluss (Zeilen ausblenden)", "Excluir (ocultar filas)", "Exclure (masquer lignes)")
+row("common.exclude_filter", "Exclude (hide items)", "Ausschluss (Einträge ausblenden)", "Excluir (ocultar elementos)", "Exclure (masquer les éléments)")
 row(
     "common.exclude_placeholder",
-    "e.g. tags:Stash; path:temp",
-    "z. B. tags:Stash; path:temp",
-    "p. ej. tags:Stash; path:temp",
-    "ex. tags:Stash; path:temp",
+    "Words, comma-separated — or tags:… ; path:… (advanced)",
+    "Komma-getrennt — oder tags:… ; path:… (Fortgeschritten)",
+    "Palabras con comas — o tags:… ; path:… (avanzado)",
+    "Mots séparés par des virgules — ou tags:… ; path:… (avancé)",
 )
 row(
     "common.exclude_syntax_hint",
-    "Exclude uses the same syntax as search. Any row that matches the exclude box is hidden (after applying search). Leave empty to show all matches.",
-    "Ausschluss nutzt dieselbe Syntax wie die Suche. Jede Zeile, die hier passt, wird ausgeblendet (nach der Suche). Leer lassen = alle Suchtreffer zeigen.",
-    "La exclusión usa la misma sintaxis. Las filas que coincidan se ocultan (después del filtro de búsqueda). Vacío = mostrar todos los resultados de búsqueda.",
-    "L’exclusion utilise la même syntaxe. Les lignes qui correspondent sont masquées (après la recherche). Vide = afficher tous les résultats de la recherche.",
+    "Exclude uses the same syntax as search. Any item that matches the exclude box is hidden (after applying search). Leave empty to show all matches.",
+    "Ausschluss nutzt dieselbe Syntax wie die Suche. Jeder Eintrag, der hier passt, wird ausgeblendet (nach der Suche). Leer lassen = alle Suchtreffer zeigen.",
+    "La exclusión usa la misma sintaxis. Los elementos que coincidan se ocultan (después del filtro de búsqueda). Vacío = mostrar todos los resultados de búsqueda.",
+    "L’exclusion utilise la même syntaxe. Les éléments qui correspondent sont masqués (après la recherche). Vide = afficher tous les résultats de la recherche.",
 )
 row("common.stash_url", "Stash URL", "Stash-URL", "URL de Stash", "URL Stash")
 row("common.api_key", "API key (if login enabled)", "API-Schlüssel (falls Login aktiv)", "Clave API (si hay inicio de sesión)", "Clé API (si connexion activée)")
@@ -69,6 +69,39 @@ row("common.replace_with", "Replace with", "Ersetzen durch", "Reemplazar por", "
 row("common.prefix", "Prefix", "Präfix", "Prefijo", "Préfixe")
 row("common.folder", "Folder", "Ordner", "Carpeta", "Dossier")
 row("common.new_name", "New name", "Neuer Name", "Nombre nuevo", "Nouveau nom")
+row(
+    "common.ph.csv_path",
+    "Path to your CSV file…",
+    "Pfad zur CSV-Datei…",
+    "Ruta al archivo CSV…",
+    "Chemin vers le fichier CSV…",
+)
+row(
+    "t3.ph.fold_src",
+    "Full path of the folder to rename…",
+    "Vollständiger Pfad des umzubenennenden Ordners…",
+    "Ruta completa de la carpeta a renombrar…",
+    "Chemin complet du dossier à renommer…",
+)
+row(
+    "common.filter_ui_hint",
+    "Menus pick the column and whether comma-separated words are combined with AND or OR. Commas separate words; quotes keep commas inside a phrase. Advanced: you can still type ; and | / OR in the box.",
+    "Die Menüs wählen Spalte und ob Komma-Wörter mit UND bzw. ODER verknüpft werden. Kommas trennen Wörter; Anführungszeichen schützen Kommas im Text. Fortgeschritten: ; und | / OR direkt eingeben.",
+    "Los menús eligen la columna y si las palabras separadas por comas van con Y u O. Las comas separan palabras; las comillas protegen comas dentro. Avanzado: ; y | / OR en el cuadro.",
+    "Les menus choisissent la colonne et si les mots séparés par des virgules sont en ET ou OU. Les virgules séparent les mots ; les guillemets protègent une virgule à l’intérieur. Avancé : ; et | / OR dans la zone.",
+)
+row("filter.field.all", "All columns", "Alle Spalten", "Todas las columnas", "Toutes les colonnes")
+row("filter.field.path", "Path", "Pfad", "Ruta", "Chemin")
+row("filter.field.name", "File name", "Dateiname", "Nombre de archivo", "Nom de fichier")
+row("filter.field.new_leaf", "New file name", "Neuer Dateiname", "Nuevo nombre", "Nouveau nom (col.)")
+row("filter.field.scene_title", "Scene title", "Szenentitel", "Título de escena", "Titre scène")
+row("filter.field.scene_tags", "Tags", "Tags", "Etiquetas", "Tags")
+row("filter.field.scene_markers", "Markers", "Marker", "Marcadores", "Marqueurs")
+row("filter.field.scene_id", "Scene ID", "Szenen-ID", "ID de escena", "ID scène")
+row("filter.field.scene_date", "Date", "Datum", "Fecha", "Date")
+row("filter.field.proposed", "Proposed name", "Vorschlagsname", "Nombre propuesto", "Nom proposé")
+row("filter.combine.and", "AND", "UND", "Y", "ET")
+row("filter.combine.or", "OR", "ODER", "O", "OU")
 
 # tab titles (must match tabs.add / _scroll_wrap)
 row("tab.1", "1 · Stash file CSV", "1 · Stash-Datei-CSV", "1 · CSV de archivos Stash", "1 · CSV fichiers Stash")
@@ -127,7 +160,29 @@ row("t1.open_out_folder", "Open output folder", "Ausgabeordner öffnen", "Abrir 
 row("t1.send_csv_to", "Send CSV to", "CSV senden an", "Enviar CSV a", "Envoyer le CSV vers")
 row("t1.tab3_rename", "Tab 3 — rename", "Tab 3 — Umbenennen", "Pestaña 3 — renombrar", "Onglet 3 — renommer")
 row("t1.tab4_move", "Tab 4 — move", "Tab 4 — Verschieben", "Pestaña 4 — mover", "Onglet 4 — déplacer")
+row("t1.tab5_schema", "Tab 5 — schema", "Tab 5 — Schema", "Pestaña 5 — esquema", "Onglet 5 — schéma")
 row("t1.label.save_csv", "Save list as (CSV)", "Liste speichern als (CSV)", "Guardar lista como (CSV)", "Enregistrer la liste (CSV)")
+row(
+    "t1.hint_connection_in_settings",
+    "Stash connection details (URL, API key, GraphQL path, export script) are under \u2699 Settings.",
+    "Stash-Zugang (URL, API-Schlüssel, GraphQL-Pfad, Export-Skript) steht unter \u2699 Einstellungen.",
+    "Datos de conexión Stash (URL, API, GraphQL, script de exportación) están en \u2699 Ajustes.",
+    "Connexion Stash (URL, clé API, chemin GraphQL, script d’export) : menu \u2699 Réglages.",
+)
+row(
+    "t1.section_export_actions",
+    "Export & checks",
+    "Export & Prüfungen",
+    "Exportación y comprobaciones",
+    "Export et vérifications",
+)
+row(
+    "settings.export_script_hint",
+    "Used when you click “Run Stash export” on Tab 1.",
+    "Wird beim Klick auf „Stash-Export starten“ in Tab 1 verwendet.",
+    "Se usa al ejecutar el export en la pestaña 1.",
+    "Utilisé quand vous lancez l’export Stash (onglet 1).",
+)
 
 # Tab 2
 row(
@@ -159,10 +214,10 @@ row("t2.run_scan", "Run disk scan", "Datenträger-Scan starten", "Escanear disco
 # Tab 3
 row(
     "t3.steps",
-    "Steps: 1) Load CSV  2) Search  3) Preview only to test  4) Rename on disk.\nBatch tools (prefix, find/replace, folder limit) sit under “Batch rules” below — open when needed. Stash connection check / CSV export test: Tab 1.",
-    "Schritte: 1) CSV laden  2) Suche  3) „Nur Vorschau“ zum Testen  4) Auf der Festplatte umbenennen.\nBatch-Werkzeuge (Präfix, Suchen/Ersetzen, Ordnerlimit) stehen unter „Batch-Regeln“ — bei Bedarf aufklappen. Stash-Verbindung / CSV-Export-Test: Tab 1.",
-    "Pasos: 1) Cargar CSV  2) Buscar  3) Vista previa para probar  4) Renombrar en disco.\nHerramientas por lotes (prefijo, buscar/reemplazar, límite de carpeta): «Reglas por lotes» — ábrelo si lo necesitas. Prueba de Stash / export CSV: pestaña 1.",
-    "Étapes : 1) Charger le CSV  2) Recherche  3) Aperçu seulement pour tester  4) Renommer sur disque.\nOutils groupés (préfixe, rechercher/remplacer, limite de dossier) : section « Règles groupées » — ouvrez si besoin. Test Stash / export CSV : onglet 1.",
+    "Steps: 1) Load CSV  2) Search / exclude (column + AND/OR menus, comma-separated words)  3) Batch rules (expand section): new name, prefix/suffix, find/replace, folder limit  4) Preview only  5) Rename on disk.\nRight-click a list item for folder path / Explorer. Stash checks: Tab 1 (\u2699 Settings).",
+    "Schritte: 1) CSV laden  2) Suche / Ausschluss (Spalte + UND/ODER, Komma-getrennt)  3) Batch-Regeln (aufklappen): neuer Name, Präfix/Suffix, Suchen/Ersetzen, Ordnerlimit  4) Nur Vorschau  5) Umbenennen.\nRechtsklick auf einen Listeneintrag: Ordner / Explorer. Stash: Tab 1 (\u2699 Einstellungen).",
+    "Pasos: 1) CSV  2) Buscar / excluir (columna + Y/O, palabras con comas)  3) Reglas por lotes (desplegar)  4) Vista previa  5) Renombrar.\nClic derecho en un elemento: carpeta / Explorador. Stash: pestaña 1 (\u2699 Ajustes).",
+    "Étapes : 1) CSV  2) Recherche / exclusion (colonne + ET/OU, mots séparés par des virgules)  3) Règles groupées (section repliable)  4) Aperçu  5) Renommer.\nClic droit sur un élément : dossier / Explorateur. Stash : onglet 1 (\u2699 Réglages).",
 )
 row(
     "t3.section_batch_title",
@@ -185,6 +240,13 @@ row(
     "Cargar: ; o , se lee del archivo. Guardar: separador desde ⚙ Ajustes (; o ,).",
     "Chargement : ; ou , lu dans le fichier. Enregistrement : séparateur des ⚙ réglages (; ou ,).",
 )
+row(
+    "t3.tree_context_hint",
+    "Tip: right-click an item — copy folder path (no file name) or open in Explorer.",
+    "Tipp: Rechtsklick auf einen Eintrag — Ordnerpfad kopieren (ohne Dateiname) oder Explorer.",
+    "Consejo: clic derecho en un elemento — copiar carpeta (sin archivo) o Explorador.",
+    "Astuce : clic droit sur un élément — copier le dossier (sans fichier) ou l’Explorateur.",
+)
 row("t3.save_csv", "Save CSV", "CSV speichern", "Guardar CSV", "Enregistrer CSV")
 row(
     "t3.search_label",
@@ -195,15 +257,56 @@ row(
 )
 row(
     "t3.filter_placeholder",
-    "e.g. name:vacation  or  name:\"my clip\"  or  path:4K;name:foo",
-    "z. B. name:Urlaub  oder  name:\"mein clip\"  oder  path:4K;name:foo",
-    "p. ej. name:vacaciones  o  name:\"mi clip\"  o  path:4K;name:foo",
-    "ex. name:vacances  ou  name:\"mon clip\"  ou  path:4K;name:foo",
+    "Words, comma-separated (e.g. vacation, 1080p) — or type path:… ; … | …",
+    "Wörter, kommagetrennt (z. B. Urlaub, 1080p) — oder path:… ; … | …",
+    "Palabras separadas por comas (p. ej. vacaciones, 1080p) — o path:… ; … | …",
+    "Mots séparés par des virgules (ex. vacances, 1080p) — ou path:… ; … | …",
+)
+row(
+    "t3.ph.new_leaf",
+    "New file name for selected items",
+    "Neuer Dateiname für ausgewählte Einträge",
+    "Nuevo nombre para elementos seleccionados",
+    "Nouveau nom pour les éléments sélectionnés",
+)
+row(
+    "t3.ph.prefix",
+    "Prefix to add",
+    "Präfix anfügen",
+    "Prefijo a añadir",
+    "Préfixe à ajouter",
+)
+row(
+    "t3.ph.suffix",
+    "Suffix before extension",
+    "Suffix vor der Endung",
+    "Sufijo antes de la extensión",
+    "Suffixe avant l’extension",
+)
+row(
+    "t3.ph.find",
+    "Text to find in file / new name",
+    "Zu suchender Text (Datei / neuer Name)",
+    "Texto a buscar en archivo / nombre",
+    "Texte à chercher (fichier / nouveau nom)",
+)
+row(
+    "t3.ph.replace",
+    "Replace with",
+    "Ersetzen durch",
+    "Reemplazar por",
+    "Remplacer par",
+)
+row(
+    "t3.ph.only_under",
+    "Only items under this folder path (optional)",
+    "Nur Einträge unter diesem Ordner (optional)",
+    "Solo elementos bajo esta carpeta (opcional)",
+    "Seulement les éléments sous ce dossier (optionnel)",
 )
 row("t3.col.path", "Full path", "Voller Pfad", "Ruta completa", "Chemin complet")
 row("t3.col.name", "Current file name", "Aktueller Dateiname", "Nombre de archivo actual", "Nom de fichier actuel")
 row("t3.col.new_leaf", "New file name", "Neuer Dateiname", "Nuevo nombre de archivo", "Nouveau nom de fichier")
-row("t3.selected", "Selected:", "Ausgewählt:", "Seleccionado:", "Sélection :")
 row("t3.copy_folder", "Copy folder path", "Ordnerpfad kopieren", "Copiar ruta de carpeta", "Copier le chemin du dossier")
 row("t3.open_explorer", "Open in Explorer", "Im Explorer öffnen", "Abrir en el Explorador", "Ouvrir dans l’Explorateur")
 row("t3.new_name_selected", "New file name (selected items)", "Neuer Dateiname (ausgewählte Einträge)", "Nuevo nombre (elementos seleccionados)", "Nouveau nom (éléments sélectionnés)")
@@ -257,10 +360,10 @@ row(
 )
 row(
     "t4.section_path_tips_title",
-    "Path tips (target vs list, subfolder, selected row…)",
-    "Pfad-Hinweise (Ziel vs Liste, Unterordner, markierte Zeile …)",
-    "Consejos de rutas (destino vs lista, subcarpeta, fila seleccionada…)",
-    "Astuces chemins (cible vs liste, sous-dossier, ligne sélectionnée…)",
+    "Path tips (target vs list, subfolder, selected item…)",
+    "Pfad-Hinweise (Ziel vs Liste, Unterordner, markierter Eintrag …)",
+    "Consejos de rutas (destino vs lista, subcarpeta, elemento seleccionado…)",
+    "Astuces chemins (cible vs liste, sous-dossier, élément sélectionné…)",
 )
 row("t4.export_csv", "Export CSV…", "CSV exportieren…", "Exportar CSV…", "Exporter CSV…")
 row("t4.col.scene_id", "Stash scene ID (scene_id)", "Stash-Szenen-ID (scene_id)", "ID de escena Stash (scene_id)", "ID scène Stash (scene_id)")
@@ -275,10 +378,10 @@ row(
 )
 row(
     "t4.target_from_row",
-    "Use selected row's folder",
-    "Ordner aus markierter Zeile",
-    "Carpeta de la fila seleccionada",
-    "Dossier de la ligne sélectionnée",
+    "Use selected item's folder",
+    "Ordner aus markiertem Eintrag",
+    "Carpeta del elemento seleccionado",
+    "Dossier de l’élément sélectionné",
 )
 row("t4.subfolder_label", "Subfolder under that path (optional)", "Unterordner unter diesem Pfad (optional)", "Subcarpeta bajo esa ruta (opcional)", "Sous-dossier sous ce chemin (optionnel)")
 row(
@@ -291,10 +394,10 @@ row(
 row("t4.suggest", "Suggest from search matches", "Aus Suchtreffern vorschlagen", "Sugerir desde coincidencias", "Suggérer depuis la recherche")
 row(
     "t4.move_hint",
-    "Default: every file you move is placed inside “Where to move files”, plus “Subfolder under that path” if you filled it (that folder is created if needed). The CSV path at the top is only the list — not the move target. Tip: “Use selected row's folder” (next to Browse) copies the parent folder of a file you selected in the list into the move target.",
-    "Standard: jede verschobene Datei landet in „Wohin verschieben“, plus „Unterordner darunter“, falls ausgefüllt (Ordner wird angelegt). Der CSV-Pfad oben ist nur die Liste — kein Ziel. Tipp: „Ordner aus markierter Zeile“ (neben Durchsuchen) übernimmt den Ordner der markierten Datei aus der Liste.",
-    "Por defecto: cada archivo va a «Dónde mover», más «Subcarpeta» si la rellenas (se crea si hace falta). La ruta CSV arriba es solo la lista, no el destino. Consejo: «Carpeta de la fila seleccionada» (junto a Examinar) copia la carpeta superior del archivo seleccionado al destino.",
-    "Par défaut : chaque fichier va dans « Où déplacer », plus « Sous-dossier » si renseigné (créé si besoin). Le chemin CSV en haut est seulement la liste, pas la cible. Astuce : « Dossier de la ligne sélectionnée » (à côté de Parcourir) met le dossier parent du fichier sélectionné dans la cible.",
+    "Default: every file you move is placed inside “Where to move files”, plus “Subfolder under that path” if you filled it (that folder is created if needed). The CSV path at the top is only the list — not the move target. Tip: “Use selected item's folder” (next to Browse) copies the parent folder of a file you selected in the list into the move target.",
+    "Standard: jede verschobene Datei landet in „Wohin verschieben“, plus „Unterordner darunter“, falls ausgefüllt (Ordner wird angelegt). Der CSV-Pfad oben ist nur die Liste — kein Ziel. Tipp: „Ordner aus markiertem Eintrag“ (neben Durchsuchen) übernimmt den Ordner der markierten Datei aus der Liste.",
+    "Por defecto: cada archivo va a «Dónde mover», más «Subcarpeta» si la rellenas (se crea si hace falta). La ruta CSV arriba es solo la lista, no el destino. Consejo: «Carpeta del elemento seleccionado» (junto a Examinar) copia la carpeta superior del archivo seleccionado al destino.",
+    "Par défaut : chaque fichier va dans « Où déplacer », plus « Sous-dossier » si renseigné (créé si besoin). Le chemin CSV en haut est seulement la liste, pas la cible. Astuce : « Dossier de l’élément sélectionné » (à côté de Parcourir) met le dossier parent du fichier sélectionné dans la cible.",
 )
 row(
     "t4.per_source",
@@ -328,28 +431,7 @@ row(
 )
 row("t4.refresh_preview", "Refresh preview", "Vorschau aktualisieren", "Actualizar vista previa", "Actualiser l’aperçu")
 
-# Tab 5 — schema-based file names (resolution via ffprobe)
-row(
-    "t5.intro",
-    "Proposed file names use the scene title (truncated); if the title is empty, the current file name is used — not Stash tags/markers. Tags and markers are still exported in the CSV and shown in the list for search (tags: / markers:). Optional year/rating, five custom tag slots, optional ffprobe. Pattern: ShortTitle (YYYY) - [custom] … [1080p] [rating].ext — then fill “new file name” and rename like Tab 3.",
-    "Vorschlagsnamen nutzen den Szenentitel (gekürzt); ist der leer, den aktuellen Dateinamen — nicht die Stash-Tags/Marker. Tags/Marker stehen trotzdem in der CSV und in der Liste (Suche: tags: / markers:). Optional Jahr/Bewertung, fünf freie Tags, ffprobe.",
-    "El nombre propuesto usa el título de escena; si falta, el nombre de archivo — no las etiquetas ni marcadores de Stash (siguen en CSV y lista; búsqueda tags: / markers:).",
-    "Le nom proposé utilise le titre de scène ; sinon le nom de fichier — pas les tags/marqueurs Stash (toujours dans le CSV et la liste ; recherche tags: / markers:).",
-)
-row(
-    "t5.hint_ffprobe",
-    "ffprobe: {exe} — after loading the CSV click «ffprobe start» (same row as the resolution options) so [1080p] etc. are filled (FFmpeg must be in PATH).",
-    "ffprobe: {exe} — nach dem CSV-Laden «ffprobe start» klicken (eine Zeile mit der Auflösungs-Anzeige), damit [1080p] usw. gefüllt werden (FFmpeg im PATH).",
-    "ffprobe: {exe} — tras cargar el CSV pulse «ffprobe start» (misma fila que la resolución) para rellenar [1080p] etc. (FFmpeg en PATH).",
-    "ffprobe : {exe} — après le CSV, cliquez sur « ffprobe start » (même ligne que la résolution) pour remplir [1080p] etc. (FFmpeg dans le PATH).",
-)
-row(
-    "t5.hint_csv_meta",
-    "Re-export from Tab 1 / export_stash_files.ps1 for scene_date, scene_rating, scene_tags (all tag names), and scene_markers (marker titles). The year in “(YYYY)” uses scene_date when that cell has a usable year; otherwise it uses the file’s creation time on Windows, birth time on macOS when available, otherwise last modification (Linux often has no true creation time). Without title/tags/marker columns, Tab 5 falls back to the file name where needed.",
-    "Neu exportieren (Tab 1 / .ps1) für scene_date, scene_rating, scene_tags und scene_markers. Das Jahr in „(JJJJ)“ nutzt scene_date, wenn daraus ein Jahr lesbar ist — sonst unter Windows das Erstellungsdatum der Datei, unter macOS den Geburtszeitstempel (birth time) falls vorhanden, sonst die letzte Änderung (unter Linux oft kein echtes Erstellungsdatum). Ohne Titel/Tags/Marker nutzt Tab 5 den Dateinamen.",
-    "Reexporte (tab 1 / .ps1) para scene_date, scene_rating, scene_tags y scene_markers. El año «(AAAA)» usa scene_date si hay año válido; si no, creación en Windows, birth time en macOS si existe, si no modificación (Linux a menudo sin creación real). Sin título/tags/marcadores, Tab 5 usa el nombre de archivo.",
-    "Réexportez (onglet 1 / .ps1) pour scene_date, scene_rating, scene_tags et scene_markers. L’année « (AAAA) » utilise scene_date si une année est lisible ; sinon création sous Windows, « birth time » sous macOS si dispo, sinon dernière modification (souvent pas de vraie création sous Linux). Sans titre/tags/marqueurs, Tab 5 retombe sur le nom de fichier.",
-)
+# Tab 5 — schema-based file names (resolution via ffprobe); long intro lives in docs/tab5_explanation.md
 row("t5.title_max", "Title max length", "Titel max. Länge", "Título máx.", "Titre max.")
 row(
     "t5.include_year",
@@ -363,8 +445,13 @@ row("t5.include_rating", "Rating from CSV", "Bewertung aus CSV", "Valoración de
 row("t5.resolution_mode", "Resolution label", "Auflösungs-Anzeige", "Etiqueta de resolución", "Libellé résolution")
 row("t5.res_heightp", "Height tier (e.g. 1080p)", "Höhenstufe (z. B. 1080p)", "Por altura (p. ej. 1080p)", "Par hauteur (ex. 1080p)")
 row("t5.res_wxh", "Width × height", "Breite × Höhe", "Ancho × alto", "Largeur × hauteur")
-row("t5.tag_slot", "Tag {n}", "Tag {n}", "Etiqueta {n}", "Étiquette {n}")
-row("t5.tag_placeholder", "word if checked", "Wort wenn aktiv", "texto si marcado", "mot si coché")
+row(
+    "t5.tag_slot_ph",
+    "Tag {n} — word if checked",
+    "Tag {n} — Wort wenn aktiv",
+    "Etiqueta {n} — texto si marcado",
+    "Étiquette {n} — mot si coché",
+)
 row(
     "t5.tag_structure_hint",
     "Optional layout idea — e.g. slot 1=[Action], 2=[Place], 3=[Time]; slots 4–5 for extras (studio, niche, …). Only checked slots appear; order in the file name is slot 1→5, then resolution and rating.",
@@ -394,17 +481,17 @@ row(
 )
 row(
     "t5.selected_only",
-    "Selected rows only — Fill and Rename apply to the highlighted rows",
-    "Nur markierte Zeilen — Füllen und Umbenennen nur für die markierten Einträge",
-    "Solo filas seleccionadas — rellenar y renombrar solo las filas resaltadas",
-    "Uniquement les lignes sélectionnées — remplir et renommer les lignes surlignées",
+    "Selected items only — Fill and Rename apply to the highlighted items",
+    "Nur ausgewählte Einträge — Füllen und Umbenennen nur für die markierten Einträge",
+    "Solo elementos seleccionados — rellenar y renombrar solo los resaltados",
+    "Uniquement les éléments sélectionnés — remplir et renommer pour les éléments surlignés",
 )
 row(
     "t5.selection_hint",
-    "Selection: Ctrl or Shift+click, or click and drag across rows (same on Tab 3 & 4).",
-    "Auswahl: Strg- oder Umschalt+Klick, oder mit gedrückter Maustaste über Zeilen ziehen (ebenso Tab 3 & 4).",
-    "Selección: Ctrl o Mayús+clic, o arrastrar (igual en pestañas 3 y 4).",
-    "Sélection : Ctrl ou Maj+clic, ou glisser sur les lignes (idem onglets 3 et 4).",
+    "Selection: Ctrl or Shift+click, or click and drag across items (same on Tab 3 & 4).",
+    "Auswahl: Strg- oder Umschalt+Klick, oder mit gedrückter Maustaste über Einträge ziehen (ebenso Tab 3 & 4).",
+    "Selección: Ctrl o Mayús+clic, o arrastrar sobre elementos (igual en pestañas 3 y 4).",
+    "Sélection : Ctrl ou Maj+clic, ou glisser sur les éléments (idem onglets 3 et 4).",
 )
 row("t5.preset_label", "Preset", "Voreinstellung", "Preajuste", "Préréglage")
 row("t5.preset_none", "—", "—", "—", "—")
@@ -518,17 +605,17 @@ row("log.t4_suggest_no_match", "Tab 4 suggest: no items match the current search
 row("log.t4_suggest_no_paths", "Tab 4 suggest: no usable source paths.\n", "Tab 4 Vorschlag: keine brauchbaren Quellpfade.\n", "Tab 4 sugerencia: sin rutas de origen usables.\n", "Tab 4 suggestion : pas de chemins source utilisables.\n")
 row(
     "log.t4_target_folder_select_row",
-    "Tab 4: select one or more rows in the list first, then click again.\n",
-    "Tab 4: bitte zuerst eine oder mehrere Zeilen in der Liste markieren, dann erneut klicken.\n",
-    "Tab 4: primero selecciona una o más filas en la lista y vuelve a pulsar.\n",
-    "Tab 4 : sélectionnez d’abord une ou plusieurs lignes dans la liste, puis recliquez.\n",
+    "Tab 4: select one or more items in the list first, then click again.\n",
+    "Tab 4: bitte zuerst einen oder mehrere Einträge in der Liste markieren, dann erneut klicken.\n",
+    "Tab 4: primero selecciona uno o más elementos en la lista y vuelve a pulsar.\n",
+    "Tab 4 : sélectionnez d’abord un ou plusieurs éléments dans la liste, puis recliquez.\n",
 )
 row(
     "log.t4_target_folder_no_path",
-    "Tab 4: selected row has no file_path.\n",
-    "Tab 4: markierte Zeile hat keinen file_path.\n",
-    "Tab 4: la fila seleccionada no tiene file_path.\n",
-    "Tab 4 : la ligne sélectionnée n’a pas de file_path.\n",
+    "Tab 4: selected item has no file_path.\n",
+    "Tab 4: markierter Eintrag hat keinen file_path.\n",
+    "Tab 4: el elemento seleccionado no tiene file_path.\n",
+    "Tab 4 : l’élément sélectionné n’a pas de file_path.\n",
 )
 row(
     "log.t4_target_folder_set",
@@ -739,17 +826,17 @@ row(
 row("log.t5_need_csv", "Tab 5: set a valid CSV path.\n", "Tab 5: gültigen CSV-Pfad setzen.\n", "Tab 5: ruta CSV válida.\n", "Tab 5 : chemin CSV valide.\n")
 row(
     "log.t5_loaded",
-    "Tab 5: loaded {n} row(s) from {path} (delimiter {sniff}).\n",
-    "Tab 5: {n} Zeile(n) aus {path} geladen (Trenner {sniff}).\n",
-    "Tab 5: {n} fila(s) desde {path} (delimitador {sniff}).\n",
-    "Tab 5 : {n} ligne(s) depuis {path} (délimiteur {sniff}).\n",
+    "Tab 5: loaded {n} item(s) from {path} (delimiter {sniff}).\n",
+    "Tab 5: {n} Eintrag/Einträge aus {path} geladen (Trenner {sniff}).\n",
+    "Tab 5: {n} elemento(s) desde {path} (delimitador {sniff}).\n",
+    "Tab 5 : {n} élément(s) depuis {path} (délimiteur {sniff}).\n",
 )
 row(
     "log.t5_saved",
-    "Tab 5: saved {n} row(s) to {path}\n",
-    "Tab 5: {n} Zeile(n) nach {path} gespeichert\n",
-    "Tab 5: guardadas {n} fila(s) en {path}\n",
-    "Tab 5 : {n} ligne(s) enregistrées dans {path}\n",
+    "Tab 5: saved {n} item(s) to {path}\n",
+    "Tab 5: {n} Eintrag/Einträge nach {path} gespeichert\n",
+    "Tab 5: guardados {n} elemento(s) en {path}\n",
+    "Tab 5 : {n} élément(s) enregistrés dans {path}\n",
 )
 row(
     "log.t5_no_ffprobe",
@@ -760,10 +847,10 @@ row(
 )
 row(
     "log.t5_probed",
-    "Tab 5: ffprobe OK for {ok} of {total} visible row(s); list refreshed.\n",
-    "Tab 5: ffprobe für {ok} von {total} sichtbaren Zeilen OK; Liste aktualisiert.\n",
-    "Tab 5: ffprobe OK en {ok} de {total} filas visibles; lista actualizada.\n",
-    "Tab 5 : ffprobe OK pour {ok} sur {total} lignes visibles ; liste actualisée.\n",
+    "Tab 5: ffprobe OK for {ok} of {total} visible item(s); list refreshed.\n",
+    "Tab 5: ffprobe für {ok} von {total} sichtbaren Einträgen OK; Liste aktualisiert.\n",
+    "Tab 5: ffprobe OK en {ok} de {total} elementos visibles; lista actualizada.\n",
+    "Tab 5 : ffprobe OK pour {ok} sur {total} éléments visibles ; liste actualisée.\n",
 )
 row(
     "log.t5_probe_row_fail",
@@ -774,31 +861,31 @@ row(
 )
 row(
     "log.t5_fill_done",
-    "Tab 5: filled new_leaf on {n} row(s).\n",
-    "Tab 5: „Neuer Dateiname“ bei {n} Zeile(n) gesetzt.\n",
-    "Tab 5: new_leaf rellenado en {n} fila(s).\n",
-    "Tab 5 : new_leaf rempli pour {n} ligne(s).\n",
+    "Tab 5: filled new_leaf on {n} item(s).\n",
+    "Tab 5: „Neuer Dateiname“ bei {n} Eintrag/Einträgen gesetzt.\n",
+    "Tab 5: new_leaf rellenado en {n} elemento(s).\n",
+    "Tab 5 : new_leaf rempli pour {n} élément(s).\n",
 )
 row(
     "log.t5_append_tags_done",
-    "Tab 5: appended checked tags on {n} row(s).\n",
-    "Tab 5: angehakte Tags bei {n} Zeile(n) angehängt.\n",
-    "Tab 5: etiquetas marcadas añadidas en {n} fila(s).\n",
-    "Tab 5 : tags cochés ajoutés sur {n} ligne(s).\n",
+    "Tab 5: appended checked tags on {n} item(s).\n",
+    "Tab 5: angehakte Tags bei {n} Eintrag/Einträgen angehängt.\n",
+    "Tab 5: etiquetas marcadas añadidas en {n} elemento(s).\n",
+    "Tab 5 : tags cochés ajoutés sur {n} élément(s).\n",
 )
 row(
     "log.t5_title_updated",
-    "Tab 5: scene title updated on {n} row(s).\n",
-    "Tab 5: Szenentitel bei {n} Zeile(n) aktualisiert.\n",
-    "Tab 5: título de escena actualizado en {n} fila(s).\n",
-    "Tab 5 : titre de scène mis à jour sur {n} ligne(s).\n",
+    "Tab 5: scene title updated on {n} item(s).\n",
+    "Tab 5: Szenentitel bei {n} Eintrag/Einträgen aktualisiert.\n",
+    "Tab 5: título de escena actualizado en {n} elemento(s).\n",
+    "Tab 5 : titre de scène mis à jour sur {n} élément(s).\n",
 )
 row(
     "log.t5_rename_need_selection",
-    "Tab 5: select at least one row, or turn off “Selected rows only”.\n",
-    "Tab 5: mindestens eine Zeile markieren oder „Nur markierte Zeilen“ deaktivieren.\n",
-    "Tab 5: elija al menos una fila o desactive «Solo filas seleccionadas».\n",
-    "Tab 5 : sélectionnez au moins une ligne ou désactivez « Uniquement les lignes sélectionnées ».\n",
+    "Tab 5: select at least one item, or turn off “Selected items only”.\n",
+    "Tab 5: mindestens einen Eintrag markieren oder „Nur ausgewählte Einträge“ deaktivieren.\n",
+    "Tab 5: elija al menos un elemento o desactive «Solo elementos seleccionados».\n",
+    "Tab 5 : sélectionnez au moins un élément ou désactivez « Uniquement les éléments sélectionnés ».\n",
 )
 row(
     "log.t5_rename_summary",

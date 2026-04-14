@@ -15,16 +15,20 @@ Small helper around **[Stash](https://github.com/stashapp/stash)**: export file 
 - **Optional for Tab 5 resolution:** `ffprobe` must be installed and available in `PATH` (typically from ffmpeg builds)
 - Launch: **`start_file_tools.bat`** or `python gui_file_tools.py`
 
+**UI (current state):** slimmer and optimized for daily use. Redundant button rows were removed (Explorer stays in the right-click menu), Tab 5 tag slots use placeholders instead of extra labels, and the ffprobe action sits directly next to the resolution options.
+
 **Tab 2:** Scan a folder on disk (no Stash), same CSV shape as Tab 1.  
 **Tab 3:** Load CSV, search + exclude filters, edit **new file name**, optional dry run, then rename on disk.  
-**Tab 4:** Move filtered/selected rows into one target folder (optional subfolder). Only the **filesystem** changes; Stash is **not** updated via the API. After moving, run **Tasks → Scan** in Stash. Options: **per-source-folder** subfolders, **selected rows only** vs all search matches, **Preview only** to log planned moves.
+**Tab 4:** Move filtered/selected items into one target folder (optional subfolder). Only the **filesystem** changes; Stash is **not** updated via the API. After moving, run **Tasks → Scan** in Stash. Options: **per-source-folder** subfolders, **selected items only** vs all search matches, **Preview only** to log planned moves.
 
 List quality-of-life on Tabs 3/4/5:
 
 - Click any table header to sort (click again toggles ascending/descending).
-- Right-click selected row: open in Explorer and copy **folder path** (without file name).
+- Right-click selected item: open in Explorer and copy **folder path** (without file name).
 
 ### Tab 5 — schema-based names (structure in the filename)
+
+Longer reference text (formerly shown in the app) lives in **[docs/tab5_explanation.md](docs/tab5_explanation.md)**.
 
 Tab 5 is for **batch-generating leaf file names** from Stash/CSV fields so **metadata lives in the name**, not only in Stash:
 
@@ -34,7 +38,7 @@ Tab 5 is for **batch-generating leaf file names** from Stash/CSV fields so **met
 - **Resolution:** optional via **ffprobe** on the file (e.g. height-based `1080p`); requires `ffprobe` in `PATH`.
 - **Rating:** optional from Stash when present in the export.
 
-Workflow: load the same CSV as on Tab 3 (re-export with **`export_stash_files.ps1`** / Tab 1 if you need the extra columns), filter rows, tune the schema, **Fill “new file name” from schema**, then **Rename** like Tab 3. **Presets** (your patterns) are stored in **`schema_rename_presets.json`** next to the app — that file is **local only** and listed in `.gitignore` so nothing personal is published.
+Workflow: load the same CSV as on Tab 3 (re-export with **`export_stash_files.ps1`** / Tab 1 if you need the extra columns), filter items, tune the schema, **Fill “new file name” from schema**, then **Rename** like Tab 3. **Presets** (your patterns) are stored in **`schema_rename_presets.json`** next to the app — that file is **local only** and listed in `.gitignore` so nothing personal is published.
 
 For already-renamed files: enable **`only add tags`** to append checked tag slots to the current name (keep title/year as-is).  
 Per-row manual fix: right-click in Tab 5 and use **Edit scene title (selected)**.
@@ -54,7 +58,8 @@ The GUI supports **English, German, Spanish, and French**. Choose the language u
 ## Recent changes (high level)
 
 - **Tab 5** schema rename: title/year/slots/resolution/rating → **new file name** column; presets in local JSON.
-- **Tab 3 / Tab 4 / Tab 5:** search field plus **exclude** filter for the row list.
+- **UI refresh:** cleaner/slimmer layout (less clutter), ffprobe placement improved, and softer blue accents in light/dark mode.
+- **Tab 3 / Tab 4 / Tab 5:** search field plus **exclude** filter for the item list.
 - **Tab 4** only moves files on disk; it does **not** call Stash’s GraphQL API to rewrite paths. After moves, use **Tasks → Scan** in Stash when those files were already in the library.
 - **Locales:** four languages; settings for appearance, CSV separator, Stash URL / API key / GraphQL path (Tab 1 export and checks).
 

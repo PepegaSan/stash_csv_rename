@@ -20,6 +20,7 @@ from file_rename_tools import (
     apply_find_replace_to_rows,
     apply_prefix_suffix_to_rows,
     build_schema_rename_leaf,
+    compose_ui_list_filter,
     ffprobe_video_size,
     filter_stub_for_subfolder_suggest,
     find_ffprobe_executable,
@@ -42,6 +43,19 @@ _SCHEMA_PRESETS_PATH = Path(__file__).resolve().parent / "schema_rename_presets.
 _DEFAULT_STASH_PS1 = Path(__file__).resolve().parent / "export_stash_files.ps1"
 _ROOT = Path(__file__).resolve().parent
 
+_FILTER_FIELD_KEYS_TAB34: tuple[str, ...] = (
+    "all",
+    "path",
+    "name",
+    "new_leaf",
+    "scene_title",
+    "scene_tags",
+    "scene_markers",
+    "scene_id",
+    "scene_date",
+)
+_FILTER_FIELD_KEYS_TAB5: tuple[str, ...] = _FILTER_FIELD_KEYS_TAB34 + ("proposed",)
+
 # Tk event.state modifier bits (not in tkinter.constants on some Python 3.12 builds).
 _TK_SHIFT_MASK = 0x0001
 _TK_CONTROL_MASK = 0x0004
@@ -51,6 +65,23 @@ _TK_CONTROL_MASK = 0x0004
 _LABEL_HINT = ("#1a1a1a", "#d0d0d0")
 # Scroll areas + labels: CTk "transparent" often paints wrong on scroll canvas in light mode (dark slabs).
 _UI_SURFACE = ("gray95", "gray17")
+# CTkEntry hint text: default theme color is often too close to typed text / background.
+_ENTRY_PLACEHOLDER_TEXT_COLOR = ("#6a6a6a", "#a3a3a3")
+
+_CTK_SOFT_THEME_JSON = _ROOT / "themes" / "blue_soft.json"
+
+
+def _load_customtkinter_theme() -> None:
+    """Softer blue accent in light and dark mode (themes/blue_soft.json)."""
+    if _CTK_SOFT_THEME_JSON.is_file():
+        ctk.set_default_color_theme(str(_CTK_SOFT_THEME_JSON.resolve()))
+    else:
+        ctk.set_default_color_theme("blue")
+
+
+# Primary action buttons — same soft accent for both light and dark.
+_BTN_ACCENT = ("#6C88A0", "#6C88A0")
+_BTN_ACCENT_HOVER = ("#5C778E", "#5C778E")
 
 
 def _label(master, **kwargs):
@@ -74,12 +105,12 @@ def _default_file_tools_csv_dir() -> Path:
 
 class FileToolsApp(ctk.CTk):
     def __init__(self) -> None:
+        _load_customtkinter_theme()
         super().__init__(fg_color=_UI_SURFACE)
         self.title("Stashmarker — file list & rename")
         self.geometry("960x900")
         self.minsize(640, 520)
         ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("blue")
 
         self._rows: list[dict[str, str]] = []
         self._last_shared_csv = ""
@@ -107,6 +138,10 @@ class FileToolsApp(ctk.CTk):
         self._t3_csv = ctk.StringVar(value="")
         self._t3_filter = ctk.StringVar(value="")
         self._t3_filter_exclude = ctk.StringVar(value="")
+        self._t3_filter_field = ctk.StringVar(value="all")
+        self._t3_filter_combine = ctk.StringVar(value="and")
+        self._t3_filter_exclude_field = ctk.StringVar(value="all")
+        self._t3_filter_exclude_combine = ctk.StringVar(value="and")
         self._t3_only_under = ctk.StringVar(value="")
         self._t3_prefix = ctk.StringVar(value="")
         self._t3_suffix = ctk.StringVar(value="")
@@ -126,6 +161,10 @@ class FileToolsApp(ctk.CTk):
         self._t4_csv = ctk.StringVar(value=str(_default_file_tools_csv_dir() / "stash_files.csv"))
         self._t4_filter = ctk.StringVar(value="")
         self._t4_filter_exclude = ctk.StringVar(value="")
+        self._t4_filter_field = ctk.StringVar(value="all")
+        self._t4_filter_combine = ctk.StringVar(value="and")
+        self._t4_filter_exclude_field = ctk.StringVar(value="all")
+        self._t4_filter_exclude_combine = ctk.StringVar(value="and")
         self._t4_target_folder = ctk.StringVar(value="")
         self._t4_dry = ctk.BooleanVar(value=True)
         self._t4_subfolder = ctk.StringVar(value="")
@@ -142,6 +181,10 @@ class FileToolsApp(ctk.CTk):
         self._t5_csv = ctk.StringVar(value=str(_default_file_tools_csv_dir() / "stash_files.csv"))
         self._t5_filter = ctk.StringVar(value="")
         self._t5_filter_exclude = ctk.StringVar(value="")
+        self._t5_filter_field = ctk.StringVar(value="all")
+        self._t5_filter_combine = ctk.StringVar(value="and")
+        self._t5_filter_exclude_field = ctk.StringVar(value="all")
+        self._t5_filter_exclude_combine = ctk.StringVar(value="and")
         self._t5_title_max = ctk.StringVar(value="15")
         self._t5_include_year = ctk.BooleanVar(value=True)
         self._t5_include_resolution = ctk.BooleanVar(value=True)
@@ -212,6 +255,10 @@ class FileToolsApp(ctk.CTk):
         self._t3_csv = ctk.StringVar(value=self._t3_csv.get())
         self._t3_filter = ctk.StringVar(value=self._t3_filter.get())
         self._t3_filter_exclude = ctk.StringVar(value=self._t3_filter_exclude.get())
+        self._t3_filter_field = ctk.StringVar(value=self._t3_filter_field.get())
+        self._t3_filter_combine = ctk.StringVar(value=self._t3_filter_combine.get())
+        self._t3_filter_exclude_field = ctk.StringVar(value=self._t3_filter_exclude_field.get())
+        self._t3_filter_exclude_combine = ctk.StringVar(value=self._t3_filter_exclude_combine.get())
         self._t3_only_under = ctk.StringVar(value=self._t3_only_under.get())
         self._t3_prefix = ctk.StringVar(value=self._t3_prefix.get())
         self._t3_suffix = ctk.StringVar(value=self._t3_suffix.get())
@@ -227,6 +274,10 @@ class FileToolsApp(ctk.CTk):
         self._t4_csv = ctk.StringVar(value=self._t4_csv.get())
         self._t4_filter = ctk.StringVar(value=self._t4_filter.get())
         self._t4_filter_exclude = ctk.StringVar(value=self._t4_filter_exclude.get())
+        self._t4_filter_field = ctk.StringVar(value=self._t4_filter_field.get())
+        self._t4_filter_combine = ctk.StringVar(value=self._t4_filter_combine.get())
+        self._t4_filter_exclude_field = ctk.StringVar(value=self._t4_filter_exclude_field.get())
+        self._t4_filter_exclude_combine = ctk.StringVar(value=self._t4_filter_exclude_combine.get())
         self._t4_target_folder = ctk.StringVar(value=self._t4_target_folder.get())
         self._t4_subfolder = ctk.StringVar(value=self._t4_subfolder.get())
         self._t4_dry = ctk.BooleanVar(value=self._t4_dry.get())
@@ -236,6 +287,10 @@ class FileToolsApp(ctk.CTk):
         self._t5_csv = ctk.StringVar(value=self._t5_csv.get())
         self._t5_filter = ctk.StringVar(value=self._t5_filter.get())
         self._t5_filter_exclude = ctk.StringVar(value=self._t5_filter_exclude.get())
+        self._t5_filter_field = ctk.StringVar(value=self._t5_filter_field.get())
+        self._t5_filter_combine = ctk.StringVar(value=self._t5_filter_combine.get())
+        self._t5_filter_exclude_field = ctk.StringVar(value=self._t5_filter_exclude_field.get())
+        self._t5_filter_exclude_combine = ctk.StringVar(value=self._t5_filter_exclude_combine.get())
         self._t5_title_max = ctk.StringVar(value=self._t5_title_max.get())
         self._t5_include_year = ctk.BooleanVar(value=self._t5_include_year.get())
         self._t5_include_resolution = ctk.BooleanVar(value=self._t5_include_resolution.get())
@@ -259,10 +314,14 @@ class FileToolsApp(ctk.CTk):
 
     def _install_t4_traces(self) -> None:
         self._remove_t4_traces()
-        cb = lambda *_: self._t4_schedule_preview_refresh()
+        cb = lambda *_: (self._t4_rebuild_tree(), self._t4_schedule_preview_refresh())
         for v in (
             self._t4_filter,
             self._t4_filter_exclude,
+            self._t4_filter_field,
+            self._t4_filter_combine,
+            self._t4_filter_exclude_field,
+            self._t4_filter_exclude_combine,
             self._t4_target_folder,
             self._t4_subfolder,
             self._t4_per_source,
@@ -287,6 +346,12 @@ class FileToolsApp(ctk.CTk):
             self._t5_trace_ids.append((self._t5_tag_en[i], self._t5_tag_en[i].trace_add("write", cb)))
             self._t5_trace_ids.append((self._t5_tag_txt[i], self._t5_tag_txt[i].trace_add("write", cb)))
         for v in (
+            self._t5_filter,
+            self._t5_filter_exclude,
+            self._t5_filter_field,
+            self._t5_filter_combine,
+            self._t5_filter_exclude_field,
+            self._t5_filter_exclude_combine,
             self._t5_title_max,
             self._t5_include_year,
             self._t5_include_resolution,
@@ -373,7 +438,8 @@ class FileToolsApp(ctk.CTk):
                     fieldbackground="#2b2b2b",
                     rowheight=22,
                 )
-                style.configure("Treeview.Heading", background="#1f538d", foreground="#dce4ee")
+                style.configure("Treeview.Heading", background="#3d3d3d", foreground="#e8e8e8")
+                style.map("Treeview.Heading", background=[("active", "#4a4a4a")])
                 style.configure(
                     "Vertical.TScrollbar",
                     background="#3d3d3d",
@@ -583,6 +649,51 @@ class FileToolsApp(ctk.CTk):
     def _pad(self) -> dict:
         return {"padx": 10, "pady": (4, 6)}
 
+    def _ph_string_entry(
+        self,
+        master: ctk.CTkFrame,
+        var: ctk.StringVar,
+        *,
+        placeholder: str,
+        height: int = 28,
+        width: int | None = None,
+        after_push: object | None = None,
+    ) -> ctk.CTkEntry:
+        """
+        CTkEntry placeholder + StringVar: CustomTkinter 5.2.x never activates placeholder when
+        ``textvariable`` is set (buggy check ``textvariable == ''``). Do not pass textvariable;
+        sync via bind + trace instead.
+        """
+        kw: dict = {
+            "placeholder_text": placeholder,
+            "placeholder_text_color": _ENTRY_PLACEHOLDER_TEXT_COLOR,
+            "height": height,
+        }
+        if width is not None:
+            kw["width"] = width
+        ent = ctk.CTkEntry(master, **kw)
+        if var.get():
+            ent.insert(0, var.get())
+
+        def push(_evt: object | None = None) -> None:
+            var.set(ent.get())
+            if after_push is not None:
+                after_push()
+
+        ent.bind("<KeyRelease>", push)
+        ent.bind("<FocusOut>", push)
+
+        def pull(_a: str = "", _b: str = "", _c: str = "") -> None:
+            val = var.get()
+            if val == ent.get():
+                return
+            ent.delete(0, "end")
+            if val:
+                ent.insert(0, val)
+
+        var.trace_add("write", pull)
+        return ent
+
     def _collapsible_section(
         self,
         parent: ctk.CTkFrame,
@@ -642,51 +753,10 @@ class FileToolsApp(ctk.CTk):
             justify="left",
             text_color=_LABEL_HINT,
             font=ctk.CTkFont(size=12),
-        ).pack(fill="x", padx=10, pady=(0, 6))
-
-        r = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        r.pack(fill="x", **pad)
-        _label(r, text=self._tr("t1.export_script"), width=160, anchor="w").pack(side="left")
-        ctk.CTkEntry(r, textvariable=self._t1_ps1).pack(side="left", fill="x", expand=True, padx=(0, 8))
-        ctk.CTkButton(
-            r, text=self._tr("common.browse"), width=self._browse_w, height=_BTN_H, command=self._browse_t1_ps1
-        ).pack(side="right")
-
-        for key, var, secret, csv_browse in (
-            ("common.stash_url", self._t1_url, False, False),
-            ("common.api_key", self._t1_api, True, False),
-            ("t1.label.save_csv", self._t1_out, False, True),
-        ):
-            rr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-            rr.pack(fill="x", **pad)
-            _label(rr, text=self._tr(key), width=160, anchor="w").pack(side="left")
-            ctk.CTkEntry(rr, textvariable=var, show="*" if secret else None).pack(
-                side="left", fill="x", expand=True, padx=(0, 8)
-            )
-            if csv_browse:
-                ctk.CTkButton(
-                    rr, text=self._tr("common.browse"), width=self._browse_w, height=_BTN_H, command=self._browse_t1_out
-                ).pack(side="right")
-
-        gql_row = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        gql_row.pack(fill="x", **pad)
-        _label(gql_row, text=self._tr("t1.graphql_path"), width=160, anchor="w").pack(side="left")
-        ctk.CTkEntry(
-            gql_row,
-            textvariable=self._t1_graphql_path,
-            placeholder_text=self._tr("t1.graphql_placeholder"),
-        ).pack(side="left", fill="x", expand=True, padx=(0, 8))
-        ctk.CTkButton(
-            gql_row,
-            text=self._tr("common.default"),
-            width=_btn_w(self._tr("common.default")),
-            height=_BTN_H,
-            command=self._t1_reset_graphql_path,
-        ).pack(side="right")
-
+        ).pack(fill="x", padx=10, pady=(0, 4))
         _label(
             parent,
-            text=self._tr("t1.hint_settings"),
+            text=self._tr("t1.hint_connection_in_settings"),
             anchor="w",
             wraplength=860,
             justify="left",
@@ -694,31 +764,66 @@ class FileToolsApp(ctk.CTk):
             font=ctk.CTkFont(size=12),
         ).pack(fill="x", padx=10, pady=(0, 6))
 
-        row2 = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        row2.pack(fill="x", **pad)
-        _label(row2, text=self._tr("t1.batch_size"), width=160, anchor="w").pack(side="left")
-        ctk.CTkEntry(row2, textvariable=self._t1_per_page, width=80).pack(side="left")
+        csv_row = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
+        csv_row.pack(fill="x", padx=10, pady=(2, 4))
+        csv_row.pack_propagate(False)
+        _label(csv_row, text=self._tr("t1.label.save_csv"), width=160, anchor="w").pack(side="left")
+        ctk.CTkEntry(csv_row, textvariable=self._t1_out, height=28).pack(
+            side="left", fill="x", expand=True, padx=(0, 8)
+        )
+        ctk.CTkButton(
+            csv_row,
+            text=self._tr("common.browse"),
+            width=self._browse_w,
+            height=_BTN_H,
+            command=self._browse_t1_out,
+        ).pack(side="right")
 
-        _label(parent, text=self._tr("t1.filters_title"), anchor="w").pack(fill="x", **pad)
+        row_batch = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
+        row_batch.pack(fill="x", padx=10, pady=(0, 4))
+        row_batch.pack_propagate(False)
+        _label(row_batch, text=self._tr("t1.batch_size"), width=160, anchor="w").pack(side="left")
+        ctk.CTkEntry(row_batch, textvariable=self._t1_per_page, width=80, height=28).pack(side="left")
+
+        filt_body = self._collapsible_section(parent, title_key="t1.filters_title", start_open=False)
         for key, var in (
             ("t1.path_prefix", self._t1_path_prefix),
             ("t1.path_contains", self._t1_path_contains),
             ("t1.name_contains", self._t1_name_contains),
             ("t1.name_regex", self._t1_name_regex),
         ):
-            rr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-            rr.pack(fill="x", **pad)
+            rr = ctk.CTkFrame(filt_body, fg_color=_UI_SURFACE, height=30)
+            rr.pack(fill="x", pady=(0, 4))
+            rr.pack_propagate(False)
             _label(rr, text=self._tr(key), width=200, anchor="w").pack(side="left")
-            ctk.CTkEntry(rr, textvariable=var).pack(side="left", fill="x", expand=True)
+            ctk.CTkEntry(rr, textvariable=var, height=28).pack(side="left", fill="x", expand=True)
 
-        bf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        bf.pack(fill="x", **pad)
+        _label(
+            parent,
+            text=self._tr("t1.section_export_actions"),
+            anchor="w",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color=_UI_SURFACE,
+        ).pack(fill="x", padx=10, pady=(6, 4))
+
+        bf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=34)
+        bf.pack(fill="x", padx=10, pady=(0, 6))
+        bf.pack_propagate(False)
         ctk.CTkButton(
             bf,
             text=self._tr("t1.run_export"),
             width=_btn_w(self._tr("t1.run_export")),
-            height=30,
+            height=_BTN_H,
+            fg_color=_BTN_ACCENT,
+            hover_color=_BTN_ACCENT_HOVER,
             command=self._run_t1_export,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            bf,
+            text=self._tr("t1.open_out_folder"),
+            width=_btn_w(self._tr("t1.open_out_folder")),
+            height=_BTN_H,
+            command=self._open_t1_out_dir,
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             bf,
@@ -733,28 +838,36 @@ class FileToolsApp(ctk.CTk):
             width=_btn_w(self._tr("t1.check_csv_export")),
             height=_BTN_H,
             command=self._probe_stash_csv_export,
-        ).pack(side="left", padx=(0, 8))
+        ).pack(side="left")
+
+        push_hdr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        push_hdr.pack(fill="x", padx=10, pady=(4, 2))
+        _label(push_hdr, text=self._tr("t1.send_csv_to"), anchor="w", text_color=_LABEL_HINT, fg_color=_UI_SURFACE).pack(
+            side="left"
+        )
+        push = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=34)
+        push.pack(fill="x", padx=10, pady=(0, 6))
+        push.pack_propagate(False)
         ctk.CTkButton(
-            bf,
-            text=self._tr("t1.open_out_folder"),
-            width=_btn_w(self._tr("t1.open_out_folder")),
-            height=_BTN_H,
-            command=self._open_t1_out_dir,
-        ).pack(side="left", padx=(0, 8))
-        _label(bf, text=self._tr("t1.send_csv_to"), text_color=_LABEL_HINT).pack(side="left", padx=(12, 4))
-        ctk.CTkButton(
-            bf,
+            push,
             text=self._tr("t1.tab3_rename"),
             width=_btn_w(self._tr("t1.tab3_rename")),
             height=_BTN_H,
             command=self._t1_push_to_tab3,
-        ).pack(side="left", padx=(0, 4))
+        ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
-            bf,
+            push,
             text=self._tr("t1.tab4_move"),
             width=_btn_w(self._tr("t1.tab4_move")),
             height=_BTN_H,
             command=self._t1_push_to_tab4,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            push,
+            text=self._tr("t1.tab5_schema"),
+            width=_btn_w(self._tr("t1.tab5_schema")),
+            height=_BTN_H,
+            command=self._t1_push_to_tab5,
         ).pack(side="left")
 
     def _build_tab2(self, parent: ctk.CTkFrame) -> None:
@@ -780,8 +893,10 @@ class FileToolsApp(ctk.CTk):
         rr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
         rr.pack(fill="x", **pad)
         _label(rr, text=self._tr("t2.file_types"), width=160, anchor="w").pack(side="left")
-        ctk.CTkEntry(
-            rr, textvariable=self._t2_patterns, placeholder_text=self._tr("t2.patterns_placeholder")
+        self._ph_string_entry(
+            rr,
+            self._t2_patterns,
+            placeholder=self._tr("t2.patterns_placeholder"),
         ).pack(side="left", fill="x", expand=True)
 
         ro = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
@@ -815,7 +930,86 @@ class FileToolsApp(ctk.CTk):
             width=_btn_w(self._tr("t1.tab4_move")),
             height=_BTN_H,
             command=self._t2_push_to_tab4,
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(
+            bf,
+            text=self._tr("t1.tab5_schema"),
+            width=_btn_w(self._tr("t1.tab5_schema")),
+            height=_BTN_H,
+            command=self._t2_push_to_tab5,
         ).pack(side="left")
+
+    def _pack_list_filter_rows(
+        self,
+        parent: ctk.CTkFrame,
+        *,
+        filter_var: ctk.StringVar,
+        exclude_var: ctk.StringVar,
+        inc_field: ctk.StringVar,
+        inc_combine: ctk.StringVar,
+        ex_field: ctk.StringVar,
+        ex_combine: ctk.StringVar,
+        field_keys: tuple[str, ...],
+        inc_placeholder: str,
+        ex_placeholder: str,
+        on_change,
+        use_keyrelease: bool = True,
+    ) -> None:
+        keys = list(field_keys)
+
+        def clamp_field(var: ctk.StringVar) -> None:
+            if var.get() not in keys:
+                var.set("all")
+
+        def clamp_combine(var: ctk.StringVar) -> None:
+            if var.get() not in ("and", "or"):
+                var.set("and")
+
+        clamp_field(inc_field)
+        clamp_field(ex_field)
+        clamp_combine(inc_combine)
+        clamp_combine(ex_combine)
+
+        flabels = [self._tr(f"filter.field.{k}") for k in field_keys]
+        c_and = self._tr("filter.combine.and")
+        c_or = self._tr("filter.combine.or")
+        clabels = [c_and, c_or]
+
+        def one_row(text_var: ctk.StringVar, fv: ctk.StringVar, cv: ctk.StringVar, ph: str) -> None:
+            row = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
+            row.pack(fill="x", padx=10, pady=(0, 4))
+            row.pack_propagate(False)
+
+            def on_field_pick(choice: str) -> None:
+                fv.set(keys[flabels.index(choice)])
+                on_change()
+
+            def on_combine_pick(choice: str) -> None:
+                cv.set("and" if choice == c_and else "or")
+                on_change()
+
+            mf = ctk.CTkOptionMenu(row, values=flabels, command=on_field_pick, width=158, height=28)
+            mf.pack(side="left", padx=(0, 6))
+            fk = fv.get()
+            mf.set(flabels[keys.index(fk) if fk in keys else 0])
+
+            mc = ctk.CTkOptionMenu(row, values=clabels, command=on_combine_pick, width=72, height=28)
+            mc.pack(side="left", padx=(0, 8))
+            mc.set(c_and if cv.get() == "and" else c_or)
+
+            ent = self._ph_string_entry(
+                row,
+                text_var,
+                placeholder=ph,
+                height=28,
+                after_push=on_change if use_keyrelease else None,
+            )
+            ent.pack(side="left", fill="x", expand=True)
+
+        one_row(filter_var, inc_field, inc_combine, inc_placeholder)
+        one_row(exclude_var, ex_field, ex_combine, ex_placeholder)
+
+        # Placeholder text in the filter boxes explains usage; no extra hint row needed.
 
     def _build_tab3(self, parent: ctk.CTkFrame) -> None:
         pad = self._pad()
@@ -827,15 +1021,25 @@ class FileToolsApp(ctk.CTk):
             justify="left",
         ).pack(fill="x", **pad)
 
-        top = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        top.pack(fill="x", **pad)
+        top = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
+        top.pack(fill="x", padx=10, pady=(2, 4))
+        top.pack_propagate(False)
         _label(top, text=self._tr("common.csv_file"), width=100, anchor="w").pack(side="left")
-        ctk.CTkEntry(top, textvariable=self._t3_csv).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self._ph_string_entry(
+            top,
+            self._t3_csv,
+            placeholder=self._tr("common.ph.csv_path"),
+            height=28,
+        ).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
             top, text=self._tr("common.browse"), width=self._browse_w, height=_BTN_H, command=self._browse_t3_csv
         ).pack(side="right", padx=(4, 0))
         ctk.CTkButton(
-            top, text=self._tr("common.load"), width=_btn_w(self._tr("common.load")), height=_BTN_H, command=self._t3_load_csv
+            top,
+            text=self._tr("common.load"),
+            width=_btn_w(self._tr("common.load")),
+            height=_BTN_H,
+            command=self._t3_load_csv,
         ).pack(side="right", padx=(4, 0))
         ctk.CTkButton(
             top,
@@ -853,93 +1057,30 @@ class FileToolsApp(ctk.CTk):
             font=ctk.CTkFont(size=12),
         ).pack(fill="x", padx=10, pady=(0, 2))
 
-        sf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        sf.pack(fill="x", **pad)
-        _label(sf, text=self._tr("t3.search_label"), width=160, anchor="w").pack(side="left")
-        ent = ctk.CTkEntry(
-            sf,
-            textvariable=self._t3_filter,
-            placeholder_text=self._tr("t3.filter_placeholder"),
-        )
-        ent.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        ent.bind("<KeyRelease>", lambda e: self._t3_rebuild_tree())
-
-        ex3 = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        ex3.pack(fill="x", **pad)
-        _label(ex3, text=self._tr("common.exclude_filter"), width=160, anchor="w").pack(side="left")
-        ent_ex3 = ctk.CTkEntry(
-            ex3,
-            textvariable=self._t3_filter_exclude,
-            placeholder_text=self._tr("common.exclude_placeholder"),
-        )
-        ent_ex3.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        ent_ex3.bind("<KeyRelease>", lambda e: self._t3_rebuild_tree())
-
-        _label(
+        self._pack_list_filter_rows(
             parent,
-            text=self._tr("common.search_syntax_hint"),
-            anchor="w",
-            justify="left",
-            wraplength=880,
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=11),
-        ).pack(fill="x", padx=10, pady=(0, 2))
-        _label(
-            parent,
-            text=self._tr("common.exclude_syntax_hint"),
-            anchor="w",
-            justify="left",
-            wraplength=880,
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=11),
-        ).pack(fill="x", padx=10, pady=(0, 4))
-
-        tree_frame = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        tree_frame.pack(fill="both", expand=True, **pad)
-        self._apply_ttk_treeview_style()
-
-        self._tree = ttk.Treeview(
-            tree_frame,
-            columns=("path", "name", "new_leaf"),
-            show="headings",
-            height=14,
-            selectmode="extended",
+            filter_var=self._t3_filter,
+            exclude_var=self._t3_filter_exclude,
+            inc_field=self._t3_filter_field,
+            inc_combine=self._t3_filter_combine,
+            ex_field=self._t3_filter_exclude_field,
+            ex_combine=self._t3_filter_exclude_combine,
+            field_keys=_FILTER_FIELD_KEYS_TAB34,
+            inc_placeholder=self._tr("t3.filter_placeholder"),
+            ex_placeholder=self._tr("common.exclude_placeholder"),
+            on_change=self._t3_rebuild_tree,
         )
-        self._tree.heading("path", text=self._tr("t3.col.path"), command=lambda: self._toggle_sort_t3("path"))
-        self._tree.heading("name", text=self._tr("t3.col.name"), command=lambda: self._toggle_sort_t3("name"))
-        self._tree.heading(
-            "new_leaf", text=self._tr("t3.col.new_leaf"), command=lambda: self._toggle_sort_t3("new_leaf")
-        )
-        self._tree.column("path", width=420, minwidth=80, stretch=False)
-        self._tree.column("name", width=160, minwidth=60, stretch=False)
-        self._tree.column("new_leaf", width=220, minwidth=60, stretch=False)
-        self._place_ttk_tree_with_scrollbars(tree_frame, self._tree)
-        self._tree.bind("<<TreeviewSelect>>", self._t3_on_select)
-        self._tree.bind("<Double-1>", lambda e: self._t3_focus_edit_leaf())
-        self._tree.bind("<Button-3>", self._t3_tree_context_menu)
 
-        t3_path_btns = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        t3_path_btns.pack(fill="x", padx=10, pady=(0, 4))
-        _label(t3_path_btns, text=self._tr("t3.selected"), width=90, anchor="w").pack(side="left")
-        ctk.CTkButton(
-            t3_path_btns,
-            text=self._tr("t3.copy_folder"),
-            width=_btn_w(self._tr("t3.copy_folder")),
-            height=_BTN_H,
-            command=self._t3_copy_selected_path,
-        ).pack(side="left", padx=(0, 8))
-        ctk.CTkButton(
-            t3_path_btns,
-            text=self._tr("t3.open_explorer"),
-            width=_btn_w(self._tr("t3.open_explorer")),
-            height=_BTN_H,
-            command=self._t3_open_selected_path,
-        ).pack(side="left")
-
-        edit_row = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        edit_row.pack(fill="x", **pad)
-        _label(edit_row, text=self._tr("t3.new_name_selected"), width=200, anchor="w").pack(side="left")
-        ctk.CTkEntry(edit_row, textvariable=self._t3_edit_leaf).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        batch_body = self._collapsible_section(parent, title_key="t3.section_batch_title", start_open=True)
+        edit_row = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE, height=32)
+        edit_row.pack(fill="x", padx=10, pady=(4, 4))
+        edit_row.pack_propagate(False)
+        self._ph_string_entry(
+            edit_row,
+            self._t3_edit_leaf,
+            placeholder=self._tr("t3.ph.new_leaf"),
+            height=28,
+        ).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
             edit_row,
             text=self._tr("t3.apply_selected"),
@@ -948,13 +1089,23 @@ class FileToolsApp(ctk.CTk):
             command=self._t3_apply_leaf_selection,
         ).pack(side="right")
 
-        batch_body = self._collapsible_section(parent, title_key="t3.section_batch_title", start_open=False)
-        rule = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE)
-        rule.pack(fill="x", **pad)
-        _label(rule, text=self._tr("common.prefix"), width=80, anchor="w").pack(side="left")
-        ctk.CTkEntry(rule, textvariable=self._t3_prefix, width=120).pack(side="left", padx=(0, 12))
-        _label(rule, text=self._tr("t3.suffix_before_ext"), width=120, anchor="w").pack(side="left")
-        ctk.CTkEntry(rule, textvariable=self._t3_suffix, width=120).pack(side="left", padx=(0, 12))
+        rule = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE, height=32)
+        rule.pack(fill="x", padx=10, pady=(0, 4))
+        rule.pack_propagate(False)
+        self._ph_string_entry(
+            rule,
+            self._t3_prefix,
+            placeholder=self._tr("t3.ph.prefix"),
+            width=140,
+            height=28,
+        ).pack(side="left", padx=(0, 10))
+        self._ph_string_entry(
+            rule,
+            self._t3_suffix,
+            placeholder=self._tr("t3.ph.suffix"),
+            width=140,
+            height=28,
+        ).pack(side="left", padx=(0, 12))
         rule_btns = ctk.CTkFrame(rule, fg_color=_UI_SURFACE)
         rule_btns.pack(side="left", padx=(8, 0))
         ctk.CTkButton(
@@ -972,12 +1123,23 @@ class FileToolsApp(ctk.CTk):
             command=self._t3_apply_rule_selected,
         ).pack(side="left")
 
-        fr_row = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE)
-        fr_row.pack(fill="x", **pad)
-        _label(fr_row, text=self._tr("common.find"), width=80, anchor="w").pack(side="left")
-        ctk.CTkEntry(fr_row, textvariable=self._t3_find, width=140).pack(side="left", padx=(0, 8))
-        _label(fr_row, text=self._tr("common.replace_with"), width=100, anchor="w").pack(side="left")
-        ctk.CTkEntry(fr_row, textvariable=self._t3_replace, width=140).pack(side="left", padx=(0, 8))
+        fr_row = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE, height=32)
+        fr_row.pack(fill="x", padx=10, pady=(0, 4))
+        fr_row.pack_propagate(False)
+        self._ph_string_entry(
+            fr_row,
+            self._t3_find,
+            placeholder=self._tr("t3.ph.find"),
+            width=150,
+            height=28,
+        ).pack(side="left", padx=(0, 8))
+        self._ph_string_entry(
+            fr_row,
+            self._t3_replace,
+            placeholder=self._tr("t3.ph.replace"),
+            width=150,
+            height=28,
+        ).pack(side="left", padx=(0, 8))
         ctk.CTkCheckBox(
             fr_row,
             text=self._tr("t3.ignore_case"),
@@ -1000,33 +1162,76 @@ class FileToolsApp(ctk.CTk):
             command=self._t3_apply_find_replace_selected,
         ).pack(side="left")
 
-        fr_hint = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE)
-        fr_hint.pack(fill="x", padx=(0, 0), pady=(0, 4))
-        _label(
-            fr_hint,
-            text=self._tr("t3.fr_hint"),
-            anchor="w",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=11),
-        ).pack(side="left", padx=(80, 0))
-
-        ou = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE)
-        ou.pack(fill="x", **pad)
-        _label(ou, text=self._tr("t3.limit_folder"), width=180, anchor="w").pack(side="left")
-        ctk.CTkEntry(ou, textvariable=self._t3_only_under).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ou = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE, height=32)
+        ou.pack(fill="x", padx=10, pady=(0, 6))
+        ou.pack_propagate(False)
+        self._ph_string_entry(
+            ou,
+            self._t3_only_under,
+            placeholder=self._tr("t3.ph.only_under"),
+            height=28,
+        ).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
-            ou, text=self._tr("common.browse"), width=self._browse_w, height=_BTN_H, command=self._browse_t3_only_under
+            ou,
+            text=self._tr("common.browse"),
+            width=self._browse_w,
+            height=_BTN_H,
+            command=self._browse_t3_only_under,
         ).pack(side="right")
 
-        runf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        runf.pack(fill="x", **pad)
+        _label(
+            parent,
+            text=self._tr("t3.tree_context_hint"),
+            anchor="w",
+            justify="left",
+            wraplength=880,
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=11),
+        ).pack(fill="x", padx=10, pady=(0, 2))
+
+        tree_outer = ctk.CTkFrame(
+            parent,
+            fg_color=_UI_SURFACE,
+            corner_radius=6,
+            border_width=1,
+            border_color=("gray72", "gray28"),
+        )
+        tree_outer.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+        tree_frame = ctk.CTkFrame(tree_outer, fg_color=_UI_SURFACE)
+        tree_frame.pack(fill="both", expand=True, padx=3, pady=3)
+        self._apply_ttk_treeview_style()
+
+        self._tree = ttk.Treeview(
+            tree_frame,
+            columns=("path", "name", "new_leaf"),
+            show="headings",
+            height=14,
+            selectmode="extended",
+        )
+        self._tree.heading("path", text=self._tr("t3.col.path"), command=lambda: self._toggle_sort_t3("path"))
+        self._tree.heading("name", text=self._tr("t3.col.name"), command=lambda: self._toggle_sort_t3("name"))
+        self._tree.heading(
+            "new_leaf", text=self._tr("t3.col.new_leaf"), command=lambda: self._toggle_sort_t3("new_leaf")
+        )
+        self._tree.column("path", width=420, minwidth=80, stretch=False)
+        self._tree.column("name", width=160, minwidth=60, stretch=False)
+        self._tree.column("new_leaf", width=220, minwidth=60, stretch=False)
+        self._place_ttk_tree_with_scrollbars(tree_frame, self._tree)
+        self._tree.bind("<<TreeviewSelect>>", self._t3_on_select)
+        self._tree.bind("<Double-1>", lambda e: self._t3_focus_edit_leaf())
+        self._tree.bind("<Button-3>", self._t3_tree_context_menu)
+
+        runf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=36)
+        runf.pack(fill="x", padx=10, pady=(0, 6))
+        runf.pack_propagate(False)
         ctk.CTkCheckBox(runf, text=self._tr("t3.preview_only"), variable=self._t3_dry).pack(side="left", padx=(0, 12))
         ctk.CTkButton(
             runf,
             text=self._tr("t3.rename_disk"),
             width=_btn_w(self._tr("t3.rename_disk")),
-            height=30,
-            fg_color="#1f538d",
+            height=_BTN_H,
+            fg_color=_BTN_ACCENT,
+            hover_color=_BTN_ACCENT_HOVER,
             command=self._t3_run_renames,
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
@@ -1052,7 +1257,11 @@ class FileToolsApp(ctk.CTk):
         fr = ctk.CTkFrame(warn_fr, fg_color="transparent")
         fr.pack(fill="x", padx=10, pady=(0, 10))
         _label(fr, text=self._tr("common.folder"), width=80, anchor="w", fg_color="transparent").pack(side="left")
-        ctk.CTkEntry(fr, textvariable=self._t3_fold_src).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self._ph_string_entry(
+            fr,
+            self._t3_fold_src,
+            placeholder=self._tr("t3.ph.fold_src"),
+        ).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
             fr, text=self._tr("common.browse"), width=self._browse_w, height=_BTN_H, command=self._browse_t3_fold_src
         ).pack(side="right")
@@ -1060,8 +1269,10 @@ class FileToolsApp(ctk.CTk):
         fr2 = ctk.CTkFrame(warn_fr, fg_color="transparent")
         fr2.pack(fill="x", padx=10, pady=(0, 10))
         _label(fr2, text=self._tr("common.new_name"), width=80, anchor="w", fg_color="transparent").pack(side="left")
-        ctk.CTkEntry(
-            fr2, textvariable=self._t3_fold_new, placeholder_text=self._tr("t3.fold_new_placeholder")
+        self._ph_string_entry(
+            fr2,
+            self._t3_fold_new,
+            placeholder=self._tr("t3.fold_new_placeholder"),
         ).pack(side="left", fill="x", expand=True, padx=(0, 8))
 
         ctk.CTkCheckBox(
@@ -1093,74 +1304,63 @@ class FileToolsApp(ctk.CTk):
             font=ctk.CTkFont(size=12),
         ).pack(fill="x", **pad)
 
-        csv_row = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        csv_row.pack(fill="x", **pad)
-        _label(csv_row, text=self._tr("common.csv_file"), width=100, anchor="w").pack(side="left")
-        ctk.CTkEntry(csv_row, textvariable=self._t4_csv).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        top4 = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
+        top4.pack(fill="x", padx=10, pady=(2, 4))
+        top4.pack_propagate(False)
+        _label(top4, text=self._tr("common.csv_file"), width=100, anchor="w").pack(side="left")
+        self._ph_string_entry(
+            top4,
+            self._t4_csv,
+            placeholder=self._tr("common.ph.csv_path"),
+            height=28,
+        ).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
-            csv_row, text=self._tr("common.browse"), width=self._browse_w, height=_BTN_H, command=self._browse_t4_csv
+            top4, text=self._tr("common.browse"), width=self._browse_w, height=_BTN_H, command=self._browse_t4_csv
         ).pack(side="right", padx=(4, 0))
         ctk.CTkButton(
-            csv_row,
+            top4,
             text=self._tr("common.load"),
             width=_btn_w(self._tr("common.load")),
             height=_BTN_H,
             command=self._t4_load_csv,
         ).pack(side="right", padx=(4, 0))
         ctk.CTkButton(
-            csv_row,
+            top4,
             text=self._tr("t4.export_csv"),
             width=_btn_w(self._tr("t4.export_csv")),
             height=_BTN_H,
             command=self._t4_export_csv,
         ).pack(side="right")
 
-        filt_row = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        filt_row.pack(fill="x", **pad)
-        _label(filt_row, text=self._tr("common.search"), width=120, anchor="w").pack(side="left")
-        ent4 = ctk.CTkEntry(
-            filt_row,
-            textvariable=self._t4_filter,
-            placeholder_text=self._tr("t3.filter_placeholder"),
-        )
-        ent4.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        ent4.bind("<KeyRelease>", lambda e: (self._t4_rebuild_tree(), self._t4_schedule_preview_refresh()))
+        def _t4_filter_ui_change() -> None:
+            self._t4_rebuild_tree()
+            self._t4_schedule_preview_refresh()
 
-        ex4 = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        ex4.pack(fill="x", **pad)
-        _label(ex4, text=self._tr("common.exclude_filter"), width=120, anchor="w").pack(side="left")
-        ent_ex4 = ctk.CTkEntry(
-            ex4,
-            textvariable=self._t4_filter_exclude,
-            placeholder_text=self._tr("common.exclude_placeholder"),
-        )
-        ent_ex4.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        ent_ex4.bind(
-            "<KeyRelease>",
-            lambda e: (self._t4_rebuild_tree(), self._t4_schedule_preview_refresh()),
-        )
-
-        _label(
+        self._pack_list_filter_rows(
             parent,
-            text=self._tr("common.search_syntax_hint"),
-            anchor="w",
-            justify="left",
-            wraplength=880,
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=11),
-        ).pack(fill="x", padx=10, pady=(0, 2))
-        _label(
-            parent,
-            text=self._tr("common.exclude_syntax_hint"),
-            anchor="w",
-            justify="left",
-            wraplength=880,
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=11),
-        ).pack(fill="x", padx=10, pady=(0, 4))
+            filter_var=self._t4_filter,
+            exclude_var=self._t4_filter_exclude,
+            inc_field=self._t4_filter_field,
+            inc_combine=self._t4_filter_combine,
+            ex_field=self._t4_filter_exclude_field,
+            ex_combine=self._t4_filter_exclude_combine,
+            field_keys=_FILTER_FIELD_KEYS_TAB34,
+            inc_placeholder=self._tr("t3.filter_placeholder"),
+            ex_placeholder=self._tr("common.exclude_placeholder"),
+            on_change=_t4_filter_ui_change,
+            use_keyrelease=False,
+        )
 
-        tree_frame = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        tree_frame.pack(fill="both", expand=True, **pad)
+        tree_outer4 = ctk.CTkFrame(
+            parent,
+            fg_color=_UI_SURFACE,
+            corner_radius=6,
+            border_width=1,
+            border_color=("gray72", "gray28"),
+        )
+        tree_outer4.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+        tree_frame = ctk.CTkFrame(tree_outer4, fg_color=_UI_SURFACE)
+        tree_frame.pack(fill="both", expand=True, padx=3, pady=3)
         self._apply_ttk_treeview_style()
         self._t4_tree = ttk.Treeview(
             tree_frame,
@@ -1180,17 +1380,6 @@ class FileToolsApp(ctk.CTk):
         self._place_ttk_tree_with_scrollbars(tree_frame, self._t4_tree)
         self._t4_tree.bind("<Button-3>", self._t4_tree_context_menu)
 
-        t4_path_btns = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        t4_path_btns.pack(fill="x", padx=10, pady=(0, 4))
-        _label(t4_path_btns, text=self._tr("t3.selected"), width=90, anchor="w").pack(side="left")
-        ctk.CTkButton(
-            t4_path_btns,
-            text=self._tr("t3.open_explorer"),
-            width=_btn_w(self._tr("t3.open_explorer")),
-            height=_BTN_H,
-            command=self._t4_open_selected_in_explorer,
-        ).pack(side="left")
-
         self._t4_stats = _label(
             parent,
             text=self._tr("t4.stats_empty"),
@@ -1203,10 +1392,10 @@ class FileToolsApp(ctk.CTk):
         tf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
         tf.pack(fill="x", **pad)
         _label(tf, text=self._tr("t4.where_move"), width=200, anchor="w").pack(side="left")
-        ctk.CTkEntry(
+        self._ph_string_entry(
             tf,
-            textvariable=self._t4_target_folder,
-            placeholder_text=self._tr("t4.where_placeholder"),
+            self._t4_target_folder,
+            placeholder=self._tr("t4.where_placeholder"),
         ).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
             tf,
@@ -1226,10 +1415,10 @@ class FileToolsApp(ctk.CTk):
         sf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
         sf.pack(fill="x", **pad)
         _label(sf, text=self._tr("t4.subfolder_label"), width=200, anchor="w").pack(side="left")
-        ctk.CTkEntry(
+        self._ph_string_entry(
             sf,
-            textvariable=self._t4_subfolder,
-            placeholder_text=self._tr("t4.sub_placeholder"),
+            self._t4_subfolder,
+            placeholder=self._tr("t4.sub_placeholder"),
         ).pack(side="left", fill="x", expand=True)
         ctk.CTkButton(
             sf,
@@ -1280,7 +1469,8 @@ class FileToolsApp(ctk.CTk):
             text=self._tr("t4.move_disk"),
             width=_btn_w(self._tr("t4.move_disk")),
             height=30,
-            fg_color="#1f538d",
+            fg_color=_BTN_ACCENT,
+            hover_color=_BTN_ACCENT_HOVER,
             command=self._t4_execute_move,
         ).pack(side="left")
         self._t4_plan = _label(
@@ -1310,35 +1500,16 @@ class FileToolsApp(ctk.CTk):
 
     def _build_tab5(self, parent: ctk.CTkFrame) -> None:
         pad = self._pad()
-        _label(
-            parent,
-            text=self._tr("t5.intro"),
-            anchor="w",
-            wraplength=860,
-            justify="left",
-        ).pack(fill="x", **pad)
-        fp_exe = find_ffprobe_executable() or ""
-        _label(
-            parent,
-            text=self._tr("t5.hint_ffprobe", exe=fp_exe or "—"),
-            anchor="w",
-            wraplength=860,
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
-        ).pack(fill="x", padx=10, pady=(0, 2))
-        _label(
-            parent,
-            text=self._tr("t5.hint_csv_meta"),
-            anchor="w",
-            wraplength=860,
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
-        ).pack(fill="x", padx=10, pady=(0, 6))
-
-        top = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        top.pack(fill="x", **pad)
+        top = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
+        top.pack(fill="x", padx=10, pady=(2, 4))
+        top.pack_propagate(False)
         _label(top, text=self._tr("common.csv_file"), width=100, anchor="w").pack(side="left")
-        ctk.CTkEntry(top, textvariable=self._t5_csv).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self._ph_string_entry(
+            top,
+            self._t5_csv,
+            placeholder=self._tr("common.ph.csv_path"),
+            height=28,
+        ).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
             top, text=self._tr("common.browse"), width=self._browse_w, height=_BTN_H, command=self._browse_t5_csv
         ).pack(side="right", padx=(4, 0))
@@ -1357,46 +1528,21 @@ class FileToolsApp(ctk.CTk):
             command=self._t5_save_csv,
         ).pack(side="right")
 
-        sf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        sf.pack(fill="x", **pad)
-        _label(sf, text=self._tr("t3.search_label"), width=160, anchor="w").pack(side="left")
-        ent5 = ctk.CTkEntry(
-            sf,
-            textvariable=self._t5_filter,
-            placeholder_text=self._tr("t3.filter_placeholder"),
-        )
-        ent5.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        ent5.bind("<KeyRelease>", lambda e: self._t5_rebuild_tree())
-
-        ex5 = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        ex5.pack(fill="x", **pad)
-        _label(ex5, text=self._tr("common.exclude_filter"), width=160, anchor="w").pack(side="left")
-        ent_ex5 = ctk.CTkEntry(
-            ex5,
-            textvariable=self._t5_filter_exclude,
-            placeholder_text=self._tr("common.exclude_placeholder"),
-        )
-        ent_ex5.pack(side="left", fill="x", expand=True, padx=(0, 8))
-        ent_ex5.bind("<KeyRelease>", lambda e: self._t5_rebuild_tree())
-
-        _label(
+        self._pack_list_filter_rows(
             parent,
-            text=self._tr("common.search_syntax_hint"),
-            anchor="w",
-            justify="left",
-            wraplength=880,
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=11),
-        ).pack(fill="x", padx=10, pady=(0, 2))
-        _label(
-            parent,
-            text=self._tr("common.exclude_syntax_hint"),
-            anchor="w",
-            justify="left",
-            wraplength=880,
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=11),
-        ).pack(fill="x", padx=10, pady=(0, 2))
+            filter_var=self._t5_filter,
+            exclude_var=self._t5_filter_exclude,
+            inc_field=self._t5_filter_field,
+            inc_combine=self._t5_filter_combine,
+            ex_field=self._t5_filter_exclude_field,
+            ex_combine=self._t5_filter_exclude_combine,
+            field_keys=_FILTER_FIELD_KEYS_TAB5,
+            inc_placeholder=self._tr("t3.filter_placeholder"),
+            ex_placeholder=self._tr("common.exclude_placeholder"),
+            on_change=self._t5_rebuild_tree,
+            use_keyrelease=False,
+        )
+
         _label(
             parent,
             text=self._tr("t5.selection_hint"),
@@ -1407,8 +1553,16 @@ class FileToolsApp(ctk.CTk):
             font=ctk.CTkFont(size=11),
         ).pack(fill="x", padx=10, pady=(0, 4))
 
-        tree_frame = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        tree_frame.pack(fill="both", expand=True, **pad)
+        tree_outer5 = ctk.CTkFrame(
+            parent,
+            fg_color=_UI_SURFACE,
+            corner_radius=6,
+            border_width=1,
+            border_color=("gray72", "gray28"),
+        )
+        tree_outer5.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+        tree_frame = ctk.CTkFrame(tree_outer5, fg_color=_UI_SURFACE)
+        tree_frame.pack(fill="both", expand=True, padx=3, pady=3)
         self._apply_ttk_treeview_style()
         self._t5_tree = ttk.Treeview(
             tree_frame,
@@ -1456,17 +1610,6 @@ class FileToolsApp(ctk.CTk):
         self._place_ttk_tree_with_scrollbars(tree_frame, self._t5_tree)
         self._t5_tree.bind("<Button-3>", self._t5_tree_context_menu)
 
-        t5_path_btns = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
-        t5_path_btns.pack(fill="x", padx=10, pady=(0, 4))
-        _label(t5_path_btns, text=self._tr("t3.selected"), width=90, anchor="w").pack(side="left")
-        ctk.CTkButton(
-            t5_path_btns,
-            text=self._tr("t3.open_explorer"),
-            width=_btn_w(self._tr("t3.open_explorer")),
-            height=_BTN_H,
-            command=self._t5_open_selected_in_explorer,
-        ).pack(side="left")
-
         opt = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
         opt.pack_propagate(False)
         opt.pack(fill="x", padx=10, pady=(2, 0))
@@ -1497,16 +1640,14 @@ class FileToolsApp(ctk.CTk):
             text=self._tr("t5.res_wxh"),
             variable=self._t5_resolution_mode,
             value="wxh",
-        ).pack(side="left")
-        rr_spacer = ctk.CTkFrame(rr, fg_color=_UI_SURFACE)
-        rr_spacer.pack(side="left", fill="x", expand=True)
+        ).pack(side="left", padx=(0, 12))
         ctk.CTkButton(
             rr,
             text=self._tr("t5.refresh_probe"),
             width=_btn_w(self._tr("t5.refresh_probe")),
             height=_BTN_H,
             command=self._t5_refresh_probe,
-        ).pack(side="right", padx=(8, 0))
+        ).pack(side="left")
 
         _label(
             parent,
@@ -1528,12 +1669,11 @@ class FileToolsApp(ctk.CTk):
             tag_row = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=30)
             tag_row.pack_propagate(False)
             tag_row.pack(fill="x", padx=10, pady=(0, 2))
-            _label(tag_row, text=self._tr("t5.tag_slot", n=i + 1), width=88, anchor="w").pack(side="left")
             ctk.CTkCheckBox(tag_row, text="", variable=self._t5_tag_en[i]).pack(side="left", padx=(0, 6))
-            ctk.CTkEntry(
+            self._ph_string_entry(
                 tag_row,
-                textvariable=self._t5_tag_txt[i],
-                placeholder_text=self._tr("t5.tag_placeholder"),
+                self._t5_tag_txt[i],
+                placeholder=self._tr("t5.tag_slot_ph", n=i + 1),
             ).pack(side="left", fill="x", expand=True)
 
         preset_fr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
@@ -1549,10 +1689,10 @@ class FileToolsApp(ctk.CTk):
             width=200,
         )
         self._t5_preset_menu.pack(side="left", padx=(0, 8))
-        ctk.CTkEntry(
+        self._ph_string_entry(
             preset_fr,
-            textvariable=self._t5_preset_name,
-            placeholder_text=self._tr("t5.preset_name_ph"),
+            self._t5_preset_name,
+            placeholder=self._tr("t5.preset_name_ph"),
             width=160,
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
@@ -1591,7 +1731,8 @@ class FileToolsApp(ctk.CTk):
             text=self._tr("t3.rename_disk"),
             width=_btn_w(self._tr("t3.rename_disk")),
             height=30,
-            fg_color="#1f538d",
+            fg_color=_BTN_ACCENT,
+            hover_color=_BTN_ACCENT_HOVER,
             command=self._t5_run_renames,
         ).pack(side="left")
 
@@ -1730,15 +1871,29 @@ class FileToolsApp(ctk.CTk):
         self._log(self._tr("log.t5_preset_deleted", name=choice))
 
     def _t5_row_visible(self, row: dict[str, str]) -> bool:
-        return row_passes_list_filters(
+        inc = compose_ui_list_filter(
             self._t5_filter.get(),
+            self._t5_filter_field.get(),
+            self._t5_filter_combine.get(),
+        )
+        exc = compose_ui_list_filter(
             self._t5_filter_exclude.get(),
+            self._t5_filter_exclude_field.get(),
+            self._t5_filter_exclude_combine.get(),
+        )
+        leaf, _w = self._t5_compute_leaf_for_row(row)
+        return row_passes_list_filters(
+            inc,
+            exc,
             file_path=row.get("file_path", ""),
             file_name=row.get("file_name", ""),
             new_leaf=row.get("new_leaf", ""),
             scene_title=row.get("scene_title", ""),
             scene_tags=row.get("scene_tags", ""),
             scene_markers=row.get("scene_markers", ""),
+            scene_id=row.get("scene_id", ""),
+            scene_date=row.get("scene_date", ""),
+            proposed_leaf=leaf or "",
         )
 
     def _t5_visible_indices(self) -> list[int]:
@@ -2006,6 +2161,15 @@ class FileToolsApp(ctk.CTk):
         p = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV", "*.csv")])
         if p:
             self._t1_out.set(p)
+            self._save_settings()
+
+    def _browse_t1_ps1_to_var(self, var: ctk.StringVar) -> None:
+        p = filedialog.askopenfilename(
+            filetypes=[("PowerShell", "*.ps1"), ("All", "*.*")],
+            title=self._tr("dlg.choose_ps1"),
+        )
+        if p:
+            var.set(p)
 
     def _open_t1_out_dir(self) -> None:
         d = Path(self._t1_out.get().strip() or ".")
@@ -2167,6 +2331,20 @@ class FileToolsApp(ctk.CTk):
     def _t2_push_to_tab4(self) -> None:
         self._push_csv_path_to_tab4(self._t2_out.get(), self._tr("log.t2_push_fail"))
 
+    def _t2_push_to_tab5(self) -> None:
+        self._push_csv_path_to_tab5(self._t2_out.get(), self._tr("log.t2_push_fail"))
+
+    def _push_csv_path_to_tab5(self, out: str, err_msg: str) -> None:
+        out = out.strip()
+        if out and Path(out).is_file():
+            self._t5_csv.set(str(Path(out).resolve()))
+            self._t5_load_csv()
+        else:
+            self._log(err_msg)
+
+    def _t1_push_to_tab5(self) -> None:
+        self._push_csv_path_to_tab5(self._t1_out.get(), self._tr("log.t1_push_fail"))
+
     # --- Tab 3 ---
     def _browse_t3_csv(self) -> None:
         p = filedialog.askopenfilename(filetypes=[("CSV", "*.csv"), ("All", "*.*")])
@@ -2215,15 +2393,28 @@ class FileToolsApp(ctk.CTk):
             self._t4_csv.set(p)
 
     def _t4_row_visible(self, row: dict[str, str]) -> bool:
-        return row_passes_list_filters(
+        inc = compose_ui_list_filter(
             self._t4_filter.get(),
+            self._t4_filter_field.get(),
+            self._t4_filter_combine.get(),
+        )
+        exc = compose_ui_list_filter(
             self._t4_filter_exclude.get(),
+            self._t4_filter_exclude_field.get(),
+            self._t4_filter_exclude_combine.get(),
+        )
+        return row_passes_list_filters(
+            inc,
+            exc,
             file_path=row.get("file_path", ""),
             file_name=row.get("file_name", ""),
             new_leaf=row.get("new_leaf", ""),
             scene_title=row.get("scene_title", ""),
             scene_tags=row.get("scene_tags", ""),
             scene_markers=row.get("scene_markers", ""),
+            scene_id=row.get("scene_id", ""),
+            scene_date=row.get("scene_date", ""),
+            proposed_leaf="",
         )
 
     def _t4_rebuild_tree(self) -> None:
@@ -2292,7 +2483,12 @@ class FileToolsApp(ctk.CTk):
             self._log(self._tr("log.t4_suggest_no_paths"))
             return
 
-        sub = sanitize_windows_dir_component(filter_stub_for_subfolder_suggest(self._t4_filter.get())) or "moved"
+        eff = compose_ui_list_filter(
+            self._t4_filter.get(),
+            self._t4_filter_field.get(),
+            self._t4_filter_combine.get(),
+        )
+        sub = sanitize_windows_dir_component(filter_stub_for_subfolder_suggest(eff)) or "moved"
         parent_strs = sorted({str(p) for p in parents})
         base = Path(parent_strs[0])
         if len(parent_strs) > 1:
@@ -2517,15 +2713,28 @@ class FileToolsApp(ctk.CTk):
             self._log(self._tr("log.save_failed", e=e))
 
     def _t3_row_visible(self, row: dict[str, str]) -> bool:
-        return row_passes_list_filters(
+        inc = compose_ui_list_filter(
             self._t3_filter.get(),
+            self._t3_filter_field.get(),
+            self._t3_filter_combine.get(),
+        )
+        exc = compose_ui_list_filter(
             self._t3_filter_exclude.get(),
+            self._t3_filter_exclude_field.get(),
+            self._t3_filter_exclude_combine.get(),
+        )
+        return row_passes_list_filters(
+            inc,
+            exc,
             file_path=row.get("file_path", ""),
             file_name=row.get("file_name", ""),
             new_leaf=row.get("new_leaf", ""),
             scene_title=row.get("scene_title", ""),
             scene_tags=row.get("scene_tags", ""),
             scene_markers=row.get("scene_markers", ""),
+            scene_id=row.get("scene_id", ""),
+            scene_date=row.get("scene_date", ""),
+            proposed_leaf="",
         )
 
     def _t3_rebuild_tree(self) -> None:
@@ -3046,8 +3255,8 @@ class FileToolsApp(ctk.CTk):
         top = ctk.CTkToplevel(self, fg_color=_UI_SURFACE)
         self._settings_dialog = top
         top.title(self._tr("settings.title"))
-        top.geometry("460x520")
-        top.minsize(400, 420)
+        top.geometry("520x640")
+        top.minsize(440, 520)
         top.transient(self)
         top.grab_set()
 
@@ -3064,6 +3273,7 @@ class FileToolsApp(ctk.CTk):
 
         appearance = ctk.StringVar(value=self._appearance_mode.get())
         delim = ctk.StringVar(value=self._t1_delim.get())
+        ps1 = ctk.StringVar(value=self._t1_ps1.get())
         url = ctk.StringVar(value=self._t1_url.get())
         api = ctk.StringVar(value=self._t1_api.get())
         gql = ctk.StringVar(value=self._t1_graphql_path.get())
@@ -3121,6 +3331,28 @@ class FileToolsApp(ctk.CTk):
             font=ctk.CTkFont(size=12),
         ).pack(fill="x", **pad)
 
+        _label(
+            outer,
+            text=self._tr("settings.export_script_hint"),
+            anchor="w",
+            wraplength=400,
+            justify="left",
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=12),
+        ).pack(fill="x", padx=14, pady=(0, 4))
+
+        ps1_row = ctk.CTkFrame(outer, fg_color=_UI_SURFACE)
+        ps1_row.pack(fill="x", **pad)
+        _label(ps1_row, text=self._tr("t1.export_script"), width=200, anchor="w").pack(side="left")
+        ctk.CTkEntry(ps1_row, textvariable=ps1).pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ctk.CTkButton(
+            ps1_row,
+            text=self._tr("common.browse"),
+            width=self._browse_w,
+            height=_BTN_H,
+            command=lambda: self._browse_t1_ps1_to_var(ps1),
+        ).pack(side="right")
+
         for key, var, secret in (
             ("common.stash_url", url, False),
             ("common.api_key", api, True),
@@ -3159,6 +3391,7 @@ class FileToolsApp(ctk.CTk):
             d = delim.get().strip()
             self._t1_delim.set(d if d in (";", ",") else ";")
 
+            self._t1_ps1.set(ps1.get())
             self._t1_url.set(url.get())
             self._t1_api.set(api.get())
             self._t1_graphql_path.set(gql.get())
@@ -3185,7 +3418,13 @@ class FileToolsApp(ctk.CTk):
             side="right", padx=(8, 0)
         )
         ctk.CTkButton(
-            btns, text=ok_t, width=_btn_w(ok_t, lo=52), height=_BTN_H, fg_color="#1f538d", command=on_ok
+            btns,
+            text=ok_t,
+            width=_btn_w(ok_t, lo=52),
+            height=_BTN_H,
+            fg_color=_BTN_ACCENT,
+            hover_color=_BTN_ACCENT_HOVER,
+            command=on_ok,
         ).pack(side="right")
 
         top.protocol("WM_DELETE_WINDOW", on_cancel)
@@ -3212,6 +3451,10 @@ class FileToolsApp(ctk.CTk):
             "t3_csv": self._t3_csv.get(),
             "t3_filter": self._t3_filter.get(),
             "t3_filter_exclude": self._t3_filter_exclude.get(),
+            "t3_filter_field": self._t3_filter_field.get(),
+            "t3_filter_combine": self._t3_filter_combine.get(),
+            "t3_filter_exclude_field": self._t3_filter_exclude_field.get(),
+            "t3_filter_exclude_combine": self._t3_filter_exclude_combine.get(),
             "t3_only_under": self._t3_only_under.get(),
             "t3_find": self._t3_find.get(),
             "t3_replace": self._t3_replace.get(),
@@ -3220,6 +3463,10 @@ class FileToolsApp(ctk.CTk):
             "t4_csv": self._t4_csv.get(),
             "t4_filter": self._t4_filter.get(),
             "t4_filter_exclude": self._t4_filter_exclude.get(),
+            "t4_filter_field": self._t4_filter_field.get(),
+            "t4_filter_combine": self._t4_filter_combine.get(),
+            "t4_filter_exclude_field": self._t4_filter_exclude_field.get(),
+            "t4_filter_exclude_combine": self._t4_filter_exclude_combine.get(),
             "t4_target_folder": self._t4_target_folder.get(),
             "t4_subfolder": self._t4_subfolder.get(),
             "t4_per_source": self._t4_per_source.get(),
@@ -3229,6 +3476,10 @@ class FileToolsApp(ctk.CTk):
             "t5_csv": self._t5_csv.get(),
             "t5_filter": self._t5_filter.get(),
             "t5_filter_exclude": self._t5_filter_exclude.get(),
+            "t5_filter_field": self._t5_filter_field.get(),
+            "t5_filter_combine": self._t5_filter_combine.get(),
+            "t5_filter_exclude_field": self._t5_filter_exclude_field.get(),
+            "t5_filter_exclude_combine": self._t5_filter_exclude_combine.get(),
             "t5_title_max": self._t5_title_max.get(),
             "t5_include_year": self._t5_include_year.get(),
             "t5_include_resolution": self._t5_include_resolution.get(),
@@ -3279,6 +3530,10 @@ class FileToolsApp(ctk.CTk):
         g("t3_csv", self._t3_csv)
         g("t3_filter", self._t3_filter)
         g("t3_filter_exclude", self._t3_filter_exclude)
+        g("t3_filter_field", self._t3_filter_field)
+        g("t3_filter_combine", self._t3_filter_combine)
+        g("t3_filter_exclude_field", self._t3_filter_exclude_field)
+        g("t3_filter_exclude_combine", self._t3_filter_exclude_combine)
         g("t3_only_under", self._t3_only_under)
         g("t3_find", self._t3_find)
         g("t3_replace", self._t3_replace)
@@ -3287,6 +3542,10 @@ class FileToolsApp(ctk.CTk):
         g("t4_csv", self._t4_csv)
         g("t4_filter", self._t4_filter)
         g("t4_filter_exclude", self._t4_filter_exclude)
+        g("t4_filter_field", self._t4_filter_field)
+        g("t4_filter_combine", self._t4_filter_combine)
+        g("t4_filter_exclude_field", self._t4_filter_exclude_field)
+        g("t4_filter_exclude_combine", self._t4_filter_exclude_combine)
         g("t4_target_folder", self._t4_target_folder)
         g("t4_subfolder", self._t4_subfolder)
         g("t4_per_source", self._t4_per_source)
@@ -3295,6 +3554,10 @@ class FileToolsApp(ctk.CTk):
         g("t5_csv", self._t5_csv)
         g("t5_filter", self._t5_filter)
         g("t5_filter_exclude", self._t5_filter_exclude)
+        g("t5_filter_field", self._t5_filter_field)
+        g("t5_filter_combine", self._t5_filter_combine)
+        g("t5_filter_exclude_field", self._t5_filter_exclude_field)
+        g("t5_filter_exclude_combine", self._t5_filter_exclude_combine)
         g("t5_title_max", self._t5_title_max)
         g("t5_include_year", self._t5_include_year)
         g("t5_include_resolution", self._t5_include_resolution)
@@ -3313,6 +3576,37 @@ class FileToolsApp(ctk.CTk):
         if isinstance(tt, list):
             for i, v in enumerate(tt[:5]):
                 self._t5_tag_txt[i].set(str(v) if v is not None else "")
+
+        k34 = frozenset(_FILTER_FIELD_KEYS_TAB34)
+        k5 = frozenset(_FILTER_FIELD_KEYS_TAB5)
+
+        def _clamp_ff(var: ctk.StringVar, allowed: frozenset[str]) -> None:
+            if var.get() not in allowed:
+                var.set("all")
+
+        def _clamp_cmb(var: ctk.StringVar) -> None:
+            if var.get() not in ("and", "or"):
+                var.set("and")
+
+        for v in (
+            self._t3_filter_field,
+            self._t3_filter_exclude_field,
+            self._t4_filter_field,
+            self._t4_filter_exclude_field,
+        ):
+            _clamp_ff(v, k34)
+        for v in (self._t5_filter_field, self._t5_filter_exclude_field):
+            _clamp_ff(v, k5)
+        for v in (
+            self._t3_filter_combine,
+            self._t3_filter_exclude_combine,
+            self._t4_filter_combine,
+            self._t4_filter_exclude_combine,
+            self._t5_filter_combine,
+            self._t5_filter_exclude_combine,
+        ):
+            _clamp_cmb(v)
+
         am = (self._appearance_mode.get() or "dark").strip().lower()
         if am not in ("dark", "light", "system"):
             am = "dark"

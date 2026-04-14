@@ -79,9 +79,12 @@ def sniff_delimiter(sample: str) -> str:
     return ";" if sample.count(";") >= sample.count(",") else ","
 
 
-# Longest match wins (e.g. folder: before path: is not needed — different strings; new: before nl: length 4>3).
+# Longest match wins (e.g. scene_id: before id:).
 _FIELD_FILTER_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("scene_id:", "scene_id"),
     ("folder:", "path"),
+    ("markers:", "scene_markers"),
+    ("proposed:", "proposed_leaf"),
     ("name:", "name"),
     ("file:", "name"),
     ("path:", "path"),
@@ -89,12 +92,115 @@ _FIELD_FILTER_PREFIXES: tuple[tuple[str, str], ...] = (
     ("nl:", "new_leaf"),
     ("title:", "scene_title"),
     ("tags:", "scene_tags"),
-    ("markers:", "scene_markers"),
+    ("date:", "scene_date"),
+    ("id:", "scene_id"),
 )
 
 
+# --- UI list filter (comma terms + column / AND/OR menus) ---------------------------------
+
+_UI_FILTER_FIELDS: frozenset[str] = frozenset(
+    {
+        "all",
+        "path",
+        "name",
+        "new_leaf",
+        "scene_title",
+        "scene_tags",
+        "scene_markers",
+        "scene_id",
+        "scene_date",
+        "proposed",
+    }
+)
+_UI_FILTER_COMBINE: frozenset[str] = frozenset({"and", "or"})
+
+_FIELD_PREFIX_FOR_UI: dict[str, str | None] = {
+    "all": None,
+    "path": "path:",
+    "name": "name:",
+    "new_leaf": "new:",
+    "scene_title": "title:",
+    "scene_tags": "tags:",
+    "scene_markers": "markers:",
+    "scene_id": "id:",
+    "scene_date": "date:",
+    "proposed": "proposed:",
+}
+
+
+def _split_comma_terms_outside_quotes(raw: str) -> list[str]:
+    """Split on commas not inside '...' or \"...\"."""
+    s = raw.strip()
+    if not s:
+        return []
+    parts: list[str] = []
+    buf: list[str] = []
+    in_dq = False
+    in_sq = False
+    for ch in s:
+        if ch == '"' and not in_sq:
+            in_dq = not in_dq
+            buf.append(ch)
+        elif ch == "'" and not in_dq:
+            in_sq = not in_sq
+            buf.append(ch)
+        elif ch == "," and not in_dq and not in_sq:
+            t = "".join(buf).strip()
+            if t:
+                parts.append(t)
+            buf = []
+        else:
+            buf.append(ch)
+    t = "".join(buf).strip()
+    if t:
+        parts.append(t)
+    return parts
+
+
+def _filter_input_looks_legacy(raw: str) -> bool:
+    """Semicolon / pipe / OR keyword syntax — skip comma rewriting."""
+    s = (raw or "").strip()
+    if not s:
+        return False
+    if "|" in s or "§" in s or ";" in s:
+        return True
+    return bool(re.search(r"(?i)\s+OR\s+", s))
+
+
+def compose_ui_list_filter(raw: str, field_key: str, combine: str) -> str:
+    """
+    Build a filter string for ``row_matches_search_filter`` from the main-window boxes:
+    comma-separated words, optional column (field) prefix, AND vs OR between words.
+
+    If the user types legacy syntax (; … | … OR …), the text is passed through unchanged.
+    """
+    fk = field_key if field_key in _UI_FILTER_FIELDS else "all"
+    cmb = combine if combine in _UI_FILTER_COMBINE else "and"
+    s = (raw or "").strip()
+    if not s:
+        return ""
+    if _filter_input_looks_legacy(s):
+        return s
+    terms = _split_comma_terms_outside_quotes(s)
+    if not terms:
+        return ""
+    prefix = _FIELD_PREFIX_FOR_UI.get(fk)
+    built: list[str] = []
+    for term in terms:
+        field, _rest = _split_filter_field_term(term)
+        if field is not None:
+            built.append(term)
+        elif prefix:
+            built.append(prefix + term)
+        else:
+            built.append(term)
+    sep = ";" if cmb == "and" else "|"
+    return sep.join(built)
+
+
 def _split_filter_field_term(part: str) -> tuple[str | None, str]:
-    """Return (field or None, remainder). field is path | name | new_leaf | scene_title | scene_tags | scene_markers."""
+    """Return (field or None, remainder). field keys match row_matches_search_filter columns."""
     p = part.strip()
     if not p:
         return None, ""
@@ -175,21 +281,27 @@ def row_matches_search_filter(
     scene_title: str = "",
     scene_tags: str = "",
     scene_markers: str = "",
+    scene_id: str = "",
+    scene_date: str = "",
+    proposed_leaf: str = "",
 ) -> bool:
     """
-    Tab 3 / Tab 4 list filter. Case-insensitive substring match unless a field prefix is used.
+    Tab 3 / Tab 4 / Tab 5 list filter. Case-insensitive substring match unless a field prefix is used.
 
     Syntax:
     - Semicolon (;): AND between parts.
     - OR between groups: ``|``, `` OR ``, ``§`` (e.g. Shift+3 DE), or ``>`` (e.g. Shift+. US; ``>`` key DE).
     - Those markers inside ``"quotes"`` stay literal.
-    - No prefix: part may match file_path, file_name, or new_leaf (any).
+    - No prefix: part may match file_path, file_name, new_leaf, scene_title, tags, markers, scene_id, scene_date (any).
     - ``name:`` or ``file:`` — only the file name (leaf).
     - ``path:`` or ``folder:`` — only the full path.
     - ``new:`` or ``nl:`` — only the new file name column (often empty until you fill it).
     - ``title:`` — scene title from CSV if present, else the file name stem (extension stripped).
     - ``tags:`` — Stash tag names cell (``scene_tags``).
     - ``markers:`` — scene marker titles cell (``scene_markers``).
+    - ``id:`` / ``scene_id:`` — scene id cell.
+    - ``date:`` — scene date / release cell.
+    - ``proposed:`` — proposed new file name (Tab 5 only; pass computed leaf).
     - Quotes ``"like this"`` strip to search that exact substring (spaces kept); works with or without a prefix.
 
     Examples:
@@ -206,6 +318,9 @@ def row_matches_search_filter(
     st_l = _effective_scene_title_for_search(file_name, scene_title).lower()
     tg_l = (scene_tags or "").lower()
     mk_l = (scene_markers or "").lower()
+    sid_l = (scene_id or "").lower()
+    sdt_l = (scene_date or "").lower()
+    prop_l = (proposed_leaf or "").lower()
 
     def term_matches(part: str) -> bool:
         field, text = _split_filter_field_term(part)
@@ -225,7 +340,13 @@ def row_matches_search_filter(
             return t in tg_l
         if field == "scene_markers":
             return t in mk_l
-        # Unqualified: match path, file name, new_leaf, scene_title, tags, markers.
+        if field == "scene_id":
+            return t in sid_l
+        if field == "scene_date":
+            return t in sdt_l
+        if field == "proposed_leaf":
+            return t in prop_l
+        # Unqualified: match path, file name, new_leaf, scene_title, tags, markers, id, date (not proposed).
         return (
             t in fp_l
             or t in fn_l
@@ -233,6 +354,8 @@ def row_matches_search_filter(
             or t in st_l
             or t in tg_l
             or t in mk_l
+            or t in sid_l
+            or t in sdt_l
         )
 
     or_groups = _split_or_groups(raw)
@@ -257,6 +380,9 @@ def row_passes_list_filters(
     scene_title: str = "",
     scene_tags: str = "",
     scene_markers: str = "",
+    scene_id: str = "",
+    scene_date: str = "",
+    proposed_leaf: str = "",
 ) -> bool:
     """
     List visibility: row matches the include filter and does **not** match the exclude filter.
@@ -269,6 +395,9 @@ def row_passes_list_filters(
         "scene_title": scene_title,
         "scene_tags": scene_tags,
         "scene_markers": scene_markers,
+        "scene_id": scene_id,
+        "scene_date": scene_date,
+        "proposed_leaf": proposed_leaf,
     }
     if not row_matches_search_filter(include_raw, **kw):
         return False
