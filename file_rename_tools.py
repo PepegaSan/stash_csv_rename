@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import unicodedata
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 from urllib.parse import unquote
 from urllib.request import Request, urlopen
 
@@ -847,10 +847,14 @@ def apply_file_renames(
     only_under_folder: Optional[str] = None,
     only_indices: Optional[Sequence[int]] = None,
     dry_run: bool = False,
+    keep_alive: Optional[Callable[[int], None]] = None,
+    keep_alive_every: int = 40,
 ) -> tuple[int, int, list[str]]:
     """
     For each row with non-empty new_leaf different from file_name, rename on disk.
     If ``only_indices`` is set, only those row indices are considered (e.g. Tab 5 selection).
+    Optional ``keep_alive(step)`` is called from the GUI main thread every ``keep_alive_every``
+    processed rows so the window stays responsive during long batches.
     Returns (renamed_count, skipped_count, log_lines).
     """
     log: list[str] = []
@@ -880,7 +884,9 @@ def apply_file_renames(
     else:
         row_indices = list(range(len(rows)))
 
-    for i in row_indices:
+    for step, i in enumerate(row_indices):
+        if keep_alive is not None and step > 0 and step % max(1, keep_alive_every) == 0:
+            keep_alive(step)
         row = rows[i]
         raw_fp = row["file_path"].strip()
         if not raw_fp:
@@ -1120,9 +1126,12 @@ def move_files_only(
     subfolder: str = "",
     dry_run: bool = False,
     per_source_subfolder: bool = False,
+    keep_alive: Optional[Callable[[int], None]] = None,
+    keep_alive_every: int = 40,
 ) -> tuple[int, int, list[str]]:
     """
     Move files only (no Stash/API update).
+    Optional ``keep_alive(step)`` is called every ``keep_alive_every`` processed files (GUI thread).
     Returns (moved_count, skipped_count, log_lines).
     """
     log: list[str] = []
@@ -1143,7 +1152,9 @@ def move_files_only(
         except OSError as e:
             return 0, len(indices), [f"Cannot create target folder {target}: {e}"]
 
-    for i in indices:
+    for step, i in enumerate(indices):
+        if keep_alive is not None and step > 0 and step % max(1, keep_alive_every) == 0:
+            keep_alive(step)
         if i < 0 or i >= len(rows):
             skipped += 1
             continue

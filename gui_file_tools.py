@@ -77,6 +77,8 @@ _FILTER_FIELD_KEYS_TAB5: tuple[str, ...] = _FILTER_FIELD_KEYS_TAB34 + ("proposed
 # Tk event.state modifier bits (not in tkinter.constants on some Python 3.12 builds).
 _TK_SHIFT_MASK = 0x0001
 _TK_CONTROL_MASK = 0x0004
+# Large Treeview fills: insert in chunks so the UI stays responsive with thousands of rows.
+_TTK_TREE_INSERT_BATCH = 350
 
 # Secondary / hint labels: (light appearance, dark appearance). CTk scroll areas use gray in light mode — avoid
 # theme grays like gray25/gray70 here or text disappears on the frame background.
@@ -217,6 +219,7 @@ class FileToolsApp(ctk.CTk):
         self._t5_preset_pick = ctk.StringVar(value="\u2014")  # same as t5.preset_none in all locales
         self._t5_ffprobe_cache: dict[str, tuple[int | None, int | None]] = {}
         self._t5_preset_menu: ctk.CTkOptionMenu | None = None
+        self._t5_rebuild_after_id: str | None = None
         self._t3_sort_col = "path"
         self._t3_sort_desc = False
         self._t4_sort_col = "path"
@@ -348,7 +351,26 @@ class FileToolsApp(ctk.CTk):
         ):
             self._t4_trace_ids.append((v, v.trace_add("write", cb)))
 
+    def _cancel_t5_tree_rebuild_after(self) -> None:
+        aid = self._t5_rebuild_after_id
+        if aid is not None:
+            try:
+                self.after_cancel(aid)
+            except (TclError, ValueError):
+                pass
+            self._t5_rebuild_after_id = None
+
+    def _t5_schedule_rebuild_tree(self) -> None:
+        """Debounce full tree rebuild — tag text traces fire on every keystroke."""
+        self._cancel_t5_tree_rebuild_after()
+        self._t5_rebuild_after_id = self.after(280, self._t5_run_scheduled_tree_rebuild)
+
+    def _t5_run_scheduled_tree_rebuild(self) -> None:
+        self._t5_rebuild_after_id = None
+        self._t5_rebuild_tree()
+
     def _remove_t5_traces(self) -> None:
+        self._cancel_t5_tree_rebuild_after()
         for v, tid in self._t5_trace_ids:
             try:
                 v.trace_remove("write", tid)
@@ -359,10 +381,11 @@ class FileToolsApp(ctk.CTk):
     def _install_t5_traces(self) -> None:
         """Refresh Tab 5 preview when schema options (tags, title length, …) change."""
         self._remove_t5_traces()
-        cb = lambda *_: self._t5_rebuild_tree()
+        cb_now = lambda *_: self._t5_rebuild_tree()
+        cb_tag_text = lambda *_: self._t5_schedule_rebuild_tree()
         for i in range(5):
-            self._t5_trace_ids.append((self._t5_tag_en[i], self._t5_tag_en[i].trace_add("write", cb)))
-            self._t5_trace_ids.append((self._t5_tag_txt[i], self._t5_tag_txt[i].trace_add("write", cb)))
+            self._t5_trace_ids.append((self._t5_tag_en[i], self._t5_tag_en[i].trace_add("write", cb_now)))
+            self._t5_trace_ids.append((self._t5_tag_txt[i], self._t5_tag_txt[i].trace_add("write", cb_tag_text)))
         for v in (
             self._t5_filter,
             self._t5_filter_exclude,
@@ -376,7 +399,7 @@ class FileToolsApp(ctk.CTk):
             self._t5_include_rating,
             self._t5_resolution_mode,
         ):
-            self._t5_trace_ids.append((v, v.trace_add("write", cb)))
+            self._t5_trace_ids.append((v, v.trace_add("write", cb_now)))
 
     def _cancel_t4_preview_after(self) -> None:
         self._t4_preview_scheduled = False
@@ -571,6 +594,65 @@ class FileToolsApp(ctk.CTk):
         self._log_box.insert("end", msg)
         self._log_box.see("end")
         self._log_box.configure(state="disabled")
+
+    def _log_many_lines(self, lines: list[str]) -> None:
+        """Append many log lines in one shot (avoids thousands of Text scroll updates)."""
+        if not lines:
+            return
+        if len(lines) <= 12:
+            for ln in lines:
+                self._log(ln if ln.endswith("\n") else ln + "\n")
+            return
+        blob = "".join(ln if ln.endswith("\n") else ln + "\n" for ln in lines)
+        self._log_box.configure(state="normal")
+        self._log_box.insert("end", blob)
+        self._log_box.see("end")
+        self._log_box.configure(state="disabled")
+        try:
+            self.update_idletasks()
+        except TclError:
+            pass
+
+    def _tk_keepalive(self, step: int) -> None:
+        """Pump Tk events during long work so Windows does not show 'Not responding'."""
+        if step % 100 == 0:
+            try:
+                self.update()
+            except TclError:
+                pass
+        elif step % 25 == 0:
+            try:
+                self.update_idletasks()
+            except TclError:
+                pass
+
+    def _ttk_tree_replace_rows(
+        self,
+        tree: ttk.Treeview,
+        rows_out: list[tuple[str, tuple[object, ...]]],
+        *,
+        batch: int = _TTK_TREE_INSERT_BATCH,
+    ) -> None:
+        ch = tree.get_children()
+        if ch:
+            tree.delete(*ch)
+        n = len(rows_out)
+        if n == 0:
+            return
+        step = 0
+        for start in range(0, n, max(1, batch)):
+            for iid, vals in rows_out[start : start + batch]:
+                tree.insert("", "end", iid=iid, values=vals)
+                step += 1
+                if step % 400 == 0:
+                    try:
+                        self.update_idletasks()
+                    except TclError:
+                        pass
+        try:
+            self.update_idletasks()
+        except TclError:
+            pass
 
     def _app_csv_delim(self) -> str:
         """Semicolon or comma between CSV columns when saving. Opening a file auto-detects ; vs ,."""
@@ -2040,31 +2122,32 @@ class FileToolsApp(ctk.CTk):
     def _t5_rebuild_tree(self) -> None:
         if not hasattr(self, "_t5_tree"):
             return
+        self._cancel_t5_tree_rebuild_after()
         prev = self._t5_selected_indices()
-        for item in self._t5_tree.get_children():
-            self._t5_tree.delete(item)
         visible = [i for i, row in enumerate(self._t5_rows) if self._t5_row_visible(row)]
         visible.sort(
             key=lambda idx: self._t5_sort_key(self._t5_rows[idx], self._t5_sort_col),
             reverse=self._t5_sort_desc,
         )
+        rows_out: list[tuple[str, tuple[object, ...]]] = []
         for i in visible:
             row = self._t5_rows[i]
             leaf, _w = self._t5_compute_leaf_for_row(row)
-            self._t5_tree.insert(
-                "",
-                "end",
-                iid=str(i),
-                values=(
-                    row.get("file_path", ""),
-                    row.get("file_name", ""),
-                    row.get("scene_title", ""),
-                    row.get("scene_tags", ""),
-                    row.get("scene_markers", ""),
-                    row.get("scene_date", ""),
-                    leaf or "—",
-                ),
+            rows_out.append(
+                (
+                    str(i),
+                    (
+                        row.get("file_path", ""),
+                        row.get("file_name", ""),
+                        row.get("scene_title", ""),
+                        row.get("scene_tags", ""),
+                        row.get("scene_markers", ""),
+                        row.get("scene_date", ""),
+                        leaf or "—",
+                    ),
+                )
             )
+        self._ttk_tree_replace_rows(self._t5_tree, rows_out)
         self._ttk_restore_row_selection(self._t5_tree, prev)
 
     def _t5_load_csv(self) -> None:
@@ -2079,6 +2162,11 @@ class FileToolsApp(ctk.CTk):
             return
         self._t5_ffprobe_cache.clear()
         self._log(self._tr("log.t5_loaded", n=len(self._t5_rows), path=path, sniff=sniffed))
+        self.after(1, self._t5_finish_csv_load)
+
+    def _t5_finish_csv_load(self) -> None:
+        if not hasattr(self, "_t5_tree"):
+            return
         self._t5_rebuild_tree()
         self._save_settings()
 
@@ -2103,7 +2191,9 @@ class FileToolsApp(ctk.CTk):
             return
         vis = self._t5_visible_indices()
         ok = 0
-        for i in vis:
+        for step, i in enumerate(vis):
+            if step > 0 and step % 15 == 0:
+                self._tk_keepalive(step)
             row = self._t5_rows[i]
             key = self._t5_cache_key_for_row(row)
             if not key:
@@ -2122,7 +2212,9 @@ class FileToolsApp(ctk.CTk):
         idxs = self._t5_selected_indices() if self._t5_use_selected.get() else self._t5_visible_indices()
         n = 0
         tags_only = bool(self._t5_tags_only_mode.get())
-        for i in idxs:
+        for step, i in enumerate(idxs):
+            if step > 0 and step % 60 == 0:
+                self._tk_keepalive(step)
             if i < 0 or i >= len(self._t5_rows):
                 continue
             row = self._t5_rows[i]
@@ -2143,6 +2235,10 @@ class FileToolsApp(ctk.CTk):
         self._t5_rebuild_tree()
 
     def _t5_run_renames(self) -> None:
+        try:
+            self.update_idletasks()
+        except TclError:
+            pass
         if self._t5_use_selected.get():
             sel = self._t5_selected_indices()
             if not sel:
@@ -2155,10 +2251,13 @@ class FileToolsApp(ctk.CTk):
         self._t5_fill_new_leaf(silent=True)
         dry = self._t5_dry.get()
         renamed, skipped, log_lines = apply_file_renames(
-            self._t5_rows, dry_run=dry, only_indices=rename_indices
+            self._t5_rows,
+            dry_run=dry,
+            only_indices=rename_indices,
+            keep_alive=self._tk_keepalive,
+            keep_alive_every=35,
         )
-        for line in log_lines:
-            self._log(line)
+        self._log_many_lines(log_lines)
         self._log(self._tr("log.t5_rename_summary", renamed=renamed, skipped=skipped, dry=dry))
         self._t5_rebuild_tree()
         self._save_settings()
@@ -2439,21 +2538,18 @@ class FileToolsApp(ctk.CTk):
         if not hasattr(self, "_t4_tree"):
             return
         prev = self._t4_selected_indices()
-        for item in self._t4_tree.get_children():
-            self._t4_tree.delete(item)
         visible = [i for i, row in enumerate(self._t4_rows) if self._t4_row_visible(row)]
         visible.sort(
             key=lambda idx: self._t4_sort_key(self._t4_rows[idx], self._t4_sort_col),
             reverse=self._t4_sort_desc,
         )
+        rows_out: list[tuple[str, tuple[object, ...]]] = []
         for i in visible:
             row = self._t4_rows[i]
-            self._t4_tree.insert(
-                "",
-                "end",
-                iid=str(i),
-                values=(row.get("file_path", ""), row.get("file_name", ""), row.get("scene_id", "")),
+            rows_out.append(
+                (str(i), (row.get("file_path", ""), row.get("file_name", ""), row.get("scene_id", ""))),
             )
+        self._ttk_tree_replace_rows(self._t4_tree, rows_out)
         self._ttk_restore_row_selection(self._t4_tree, prev)
 
     def _t4_selected_indices(self) -> list[int]:
@@ -2569,6 +2665,11 @@ class FileToolsApp(ctk.CTk):
                 sniff=sniffed,
             )
         )
+        self.after(1, self._t4_finish_csv_load)
+
+    def _t4_finish_csv_load(self) -> None:
+        if not hasattr(self, "_t4_tree"):
+            return
         self._t4_rebuild_tree()
         self._t4_refresh_preview()
         self._save_settings()
@@ -2713,6 +2814,11 @@ class FileToolsApp(ctk.CTk):
         self._log(
             self._tr("log.t3_loaded", n=len(self._rows), path=path, sniff=sniffed),
         )
+        self.after(1, self._t3_finish_csv_load)
+
+    def _t3_finish_csv_load(self) -> None:
+        if not hasattr(self, "_tree"):
+            return
         self._t3_rebuild_tree()
         self._t4_schedule_preview_refresh()
         self._save_settings()
@@ -2757,25 +2863,25 @@ class FileToolsApp(ctk.CTk):
 
     def _t3_rebuild_tree(self) -> None:
         prev = self._t3_selected_indices()
-        for item in self._tree.get_children():
-            self._tree.delete(item)
         visible = [i for i, row in enumerate(self._rows) if self._t3_row_visible(row)]
         visible.sort(
             key=lambda idx: self._t3_sort_key(self._rows[idx], self._t3_sort_col),
             reverse=self._t3_sort_desc,
         )
+        rows_out: list[tuple[str, tuple[object, ...]]] = []
         for i in visible:
             row = self._rows[i]
-            self._tree.insert(
-                "",
-                "end",
-                iid=str(i),
-                values=(
-                    row.get("file_path", ""),
-                    row.get("file_name", ""),
-                    row.get("new_leaf", ""),
-                ),
+            rows_out.append(
+                (
+                    str(i),
+                    (
+                        row.get("file_path", ""),
+                        row.get("file_name", ""),
+                        row.get("new_leaf", ""),
+                    ),
+                )
             )
+        self._ttk_tree_replace_rows(self._tree, rows_out)
         self._ttk_restore_row_selection(self._tree, prev)
 
     def _t3_selected_indices(self) -> list[int]:
@@ -3160,11 +3266,20 @@ class FileToolsApp(ctk.CTk):
         if not self._rows:
             self._log(self._tr("log.load_csv_first"))
             return
+        try:
+            self.update_idletasks()
+        except TclError:
+            pass
         only = self._t3_only_under.get().strip() or None
         dry = self._t3_dry.get()
-        renamed, skipped, lines = apply_file_renames(self._rows, only_under_folder=only, dry_run=dry)
-        for line in lines:
-            self._log(line + "\n")
+        renamed, skipped, lines = apply_file_renames(
+            self._rows,
+            only_under_folder=only,
+            dry_run=dry,
+            keep_alive=self._tk_keepalive,
+            keep_alive_every=35,
+        )
+        self._log_many_lines(lines)
         self._log(
             self._tr(
                 "log.t3_rename_done",
@@ -3193,6 +3308,10 @@ class FileToolsApp(ctk.CTk):
         self._save_settings()
 
     def _t4_run_move_only_indices(self, indices: list[int], mode_label: str) -> None:
+        try:
+            self.update_idletasks()
+        except TclError:
+            pass
         if not self._t4_rows:
             self._log(self._tr("log.t4_load_first"))
             return
@@ -3217,9 +3336,10 @@ class FileToolsApp(ctk.CTk):
             subfolder=self._t4_subfolder.get(),
             dry_run=dry,
             per_source_subfolder=per_source,
+            keep_alive=self._tk_keepalive,
+            keep_alive_every=35,
         )
-        for line in lines:
-            self._log(line + "\n")
+        self._log_many_lines(lines)
         self._log(
             self._tr(
                 "log.t4_move_only_done",
