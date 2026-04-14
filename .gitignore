@@ -26,6 +26,10 @@ file_tools_csv/
 # Any CSV in the repo tree (path lists — do not publish)
 *.csv
 
+# Local design/test helper scripts
+gui_file_tools_design_test.py
+start_design_test.bat
+
 # Tooling / IDEs
 .idea/
 .vscode/
