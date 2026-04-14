@@ -14,6 +14,7 @@ Small helper around **[Stash](https://github.com/stashapp/stash)**: export file 
 
 - **Python 3** and **PowerShell** (Windows)
 - **Install dependencies (Windows):** run **`install.bat`**, or manually: `pip install -r requirements.txt`
+- **Optional for Tab 5 resolution:** `ffprobe` must be installed and available in `PATH` (typically from ffmpeg builds)
 - Launch: **`start_file_tools.bat`** or `python gui_file_tools.py`
 
 **Tab 2:** Scan a folder on disk (no Stash), same CSV shape as Tab 1.  
@@ -27,7 +28,7 @@ Tab 5 is for **batch-generating leaf file names** from Stash/CSV fields so **met
 - **Base:** scene **title**, truncated to a max length (default 15); if the title is empty, the current **file name** is used — **not** Stash tags or markers as the main stem.
 - **Year:** optional, from CSV when available, otherwise from file timestamps (creation where supported, else modification).
 - **Up to five optional `[…]` slots:** map to scene tag names or fixed text you choose (checkboxes + text per slot).
-- **Resolution:** optional via **ffprobe** on the file (e.g. height-based `1080p`).
+- **Resolution:** optional via **ffprobe** on the file (e.g. height-based `1080p`); requires `ffprobe` in `PATH`.
 - **Rating:** optional from Stash when present in the export.
 
 Workflow: load the same CSV as on Tab 3 (re-export with **`export_stash_files.ps1`** / Tab 1 if you need the extra columns), filter rows, tune the schema, **Fill “new file name” from schema**, then **Rename** like Tab 3. **Presets** (your patterns) are stored in **`schema_rename_presets.json`** next to the app — that file is **local only** and listed in `.gitignore` so nothing personal is published.
