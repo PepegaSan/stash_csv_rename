@@ -380,10 +380,17 @@ row("t5.col.proposed", "Proposed name", "Vorschlagsname", "Nombre propuesto", "N
 row("t5.refresh_probe", "ffprobe start", "ffprobe start", "ffprobe start", "ffprobe start")
 row(
     "t5.fill_new_leaf",
-    "Fill “new file name” from schema",
-    "„Neuer Dateiname“ aus Schema füllen",
-    "Rellenar «nuevo nombre» según esquema",
-    "Remplir « nouveau nom » (schéma)",
+    "Fill new file names",
+    "Neue Dateinamen füllen",
+    "Rellenar nombres nuevos",
+    "Remplir les nouveaux noms",
+)
+row(
+    "t5.tags_only_mode",
+    "only add tags",
+    "Nur Tags hinzufügen",
+    "solo añadir etiquetas",
+    "ajouter seulement des tags",
 )
 row(
     "t5.selected_only",
@@ -463,10 +470,25 @@ row("dlg.folder_danger", "Folder to rename (dangerous)", "Umzubenennender Ordner
 row("dlg.move_target", "Where to move files — choose folder (full path)", "Wohin verschieben — Ordner wählen (voller Pfad)", "Dónde mover archivos — elegir carpeta (ruta completa)", "Où déplacer — choisir le dossier (chemin complet)")
 row("dlg.export_t4", "Export Tab 4 CSV", "Tab-4-CSV exportieren", "Exportar CSV pestaña 4", "Exporter CSV onglet 4")
 row("dlg.choose_ps1", "Choose export_stash_files.ps1", "export_stash_files.ps1 wählen", "Elegir export_stash_files.ps1", "Choisir export_stash_files.ps1")
+row("dlg.t5_edit_title_title", "Edit scene title", "Szenentitel bearbeiten", "Editar título de escena", "Modifier le titre de scène")
+row(
+    "dlg.t5_edit_title_prompt",
+    "Scene title for selected row(s):",
+    "Szenentitel für markierte Zeile(n):",
+    "Título de escena para fila(s) seleccionada(s):",
+    "Titre de scène pour les lignes sélectionnées :",
+)
 
 # Context menu (Tab 3 tree)
 row("ctx.copy_folder_path", "Copy folder path", "Ordnerpfad kopieren", "Copiar ruta de carpeta", "Copier le chemin du dossier")
 row("ctx.open_in_explorer", "Open in Explorer", "Im Explorer öffnen", "Abrir en el Explorador", "Ouvrir dans l’Explorateur")
+row(
+    "ctx.t5_edit_scene_title",
+    "Edit scene title (selected)",
+    "Szenentitel bearbeiten (markiert)",
+    "Editar título de escena (seleccionadas)",
+    "Modifier le titre de scène (sélection)",
+)
 
 # --- log & dynamic (templates use {placeholders}) ---
 row("log.saved_log_to", "Saved log to {path}\n", "Protokoll gespeichert unter {path}\n", "Registro guardado en {path}\n", "Journal enregistré dans {path}\n")
@@ -756,6 +778,20 @@ row(
     "Tab 5: „Neuer Dateiname“ bei {n} Zeile(n) gesetzt.\n",
     "Tab 5: new_leaf rellenado en {n} fila(s).\n",
     "Tab 5 : new_leaf rempli pour {n} ligne(s).\n",
+)
+row(
+    "log.t5_append_tags_done",
+    "Tab 5: appended checked tags on {n} row(s).\n",
+    "Tab 5: angehakte Tags bei {n} Zeile(n) angehängt.\n",
+    "Tab 5: etiquetas marcadas añadidas en {n} fila(s).\n",
+    "Tab 5 : tags cochés ajoutés sur {n} ligne(s).\n",
+)
+row(
+    "log.t5_title_updated",
+    "Tab 5: scene title updated on {n} row(s).\n",
+    "Tab 5: Szenentitel bei {n} Zeile(n) aktualisiert.\n",
+    "Tab 5: título de escena actualizado en {n} fila(s).\n",
+    "Tab 5 : titre de scène mis à jour sur {n} ligne(s).\n",
 )
 row(
     "log.t5_rename_need_selection",

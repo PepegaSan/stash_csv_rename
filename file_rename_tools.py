@@ -1397,3 +1397,56 @@ def build_schema_rename_leaf(
     if not leaf.strip():
         return "", "empty file name"
     return leaf, warn
+
+
+def append_schema_tags_to_leaf(
+    base_leaf: str,
+    *,
+    tag_enabled: Optional[list[bool]] = None,
+    tag_text: Optional[list[str]] = None,
+) -> str:
+    """
+    Append currently enabled custom ``[tag]`` slots to an existing file leaf without rebuilding title/year.
+    Existing bracket tokens are kept and duplicates are avoided (case-insensitive).
+    """
+    leaf = (base_leaf or "").strip()
+    if not leaf:
+        return ""
+    if any(sep in leaf for sep in "\\/:") or leaf in (".", ".."):
+        return ""
+
+    te = list(tag_enabled or [])
+    tt = list(tag_text or [])
+    while len(te) < 5:
+        te.append(False)
+    while len(tt) < 5:
+        tt.append("")
+    te = te[:5]
+    tt = tt[:5]
+
+    existing = {
+        m.group(1).strip().casefold()
+        for m in re.finditer(r"\[([^\]]+)\]", leaf)
+        if m.group(1).strip()
+    }
+
+    add: list[str] = []
+    for i in range(5):
+        if not te[i]:
+            continue
+        inner = sanitize_schema_label((tt[i] or "").strip(), max_len=40)
+        if not inner:
+            continue
+        key = inner.casefold()
+        if key in existing:
+            continue
+        existing.add(key)
+        add.append(f"[{inner}]")
+
+    if not add:
+        return leaf
+
+    ext = Path(leaf).suffix
+    stem = leaf[: -len(ext)] if ext else leaf
+    stem = stem.rstrip() or "video"
+    return f"{stem} {' '.join(add)}{ext}"

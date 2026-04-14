@@ -21,6 +21,11 @@ Small helper around **[Stash](https://github.com/stashapp/stash)**: export file 
 **Tab 3:** Load CSV, search + exclude filters, edit **new file name**, optional dry run, then rename on disk.  
 **Tab 4:** Move filtered/selected rows into one target folder (optional subfolder). Only the **filesystem** changes; Stash is **not** updated via the API. After moving, run **Tasks → Scan** in Stash. Options: **per-source-folder** subfolders, **selected rows only** vs all search matches, **Preview only** to log planned moves.
 
+List quality-of-life on Tabs 3/4/5:
+
+- Click any table header to sort (click again toggles ascending/descending).
+- Right-click selected row: open in Explorer and copy **folder path** (without file name).
+
 ### Tab 5 — schema-based names (structure in the filename)
 
 Tab 5 is for **batch-generating leaf file names** from Stash/CSV fields so **metadata lives in the name**, not only in Stash:
@@ -32,6 +37,9 @@ Tab 5 is for **batch-generating leaf file names** from Stash/CSV fields so **met
 - **Rating:** optional from Stash when present in the export.
 
 Workflow: load the same CSV as on Tab 3 (re-export with **`export_stash_files.ps1`** / Tab 1 if you need the extra columns), filter rows, tune the schema, **Fill “new file name” from schema**, then **Rename** like Tab 3. **Presets** (your patterns) are stored in **`schema_rename_presets.json`** next to the app — that file is **local only** and listed in `.gitignore` so nothing personal is published.
+
+For already-renamed files: enable **`only add tags`** to append checked tag slots to the current name (keep title/year as-is).  
+Per-row manual fix: right-click in Tab 5 and use **Edit scene title (selected)**.
 
 `scene_tags` and `scene_markers` remain in the CSV for the table and search (`tags:` / `markers:` filters on Tab 3–5).
 
