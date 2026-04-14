@@ -1,7 +1,5 @@
 # Stash — file list & batch rename
 
-> **Status: work in progress** — Export, rename, and move-on-disk flows are not fully tested end-to-end yet. Use at your own risk; feedback is welcome. This is **not** a stable or “production-ready” release.
-
 Small helper around **[Stash](https://github.com/stashapp/stash)**: export file paths (or scan a folder), edit names in a CSV or in the GUI, then rename or move files on disk.
 
 **Main idea:** keep your library **structured on disk** by putting **relevant scene data into the file name** (title slug, year, short tag slots, resolution, rating) instead of relying only on the database or long paths. Tab 1–2 produce a **single CSV** you can filter and work through; Tab 3 applies manual or generated names; Tab 4 moves files into folders; **Tab 5** fills **“new file name”** from a **schema** so names stay consistent across many files.
