@@ -17,10 +17,13 @@ from i18n import SUPPORTED_LANGS, Translator
 from file_rename_tools import (
     append_schema_tags_to_leaf,
     apply_file_renames,
+    undo_file_renames,
     apply_find_replace_to_rows,
     apply_prefix_suffix_to_rows,
+    build_leaf_tags_only_mode,
     build_schema_rename_leaf,
     compose_ui_list_filter,
+    merge_extra_bracket_tags_into_leaf,
     ffprobe_video_size,
     filter_stub_for_subfolder_suggest,
     find_ffprobe_executable,
@@ -34,6 +37,7 @@ from file_rename_tools import (
     scan_folder_files,
     probe_stash_csv_export_schema,
     test_stash_graphql_connection,
+    truncate_leaf_stem_to_max_chars,
     unique_leaf_in_dir,
     write_rename_csv,
 )
@@ -103,6 +107,9 @@ def _load_customtkinter_theme() -> None:
 _BTN_ACCENT = ("#6C88A0", "#6C88A0")
 _BTN_ACCENT_HOVER = ("#5C778E", "#5C778E")
 
+# Tab 5 — highlight “selected rows only” control.
+_T5_SEL_BOX_BG = ("#e4ecf5", "#283040")
+_T5_SEL_BOX_BORDER = _BTN_ACCENT
 
 def _label(master, **kwargs):
     """CTkLabel with same surface as scroll content (not transparent — avoids dark blocks in light mode)."""
@@ -212,7 +219,10 @@ class FileToolsApp(ctk.CTk):
         self._t5_resolution_mode = ctk.StringVar(value="heightp")
         self._t5_dry = ctk.BooleanVar(value=True)
         self._t5_use_selected = ctk.BooleanVar(value=False)
-        self._t5_tags_only_mode = ctk.BooleanVar(value=False)
+        self._t5_append_tags_only = ctk.BooleanVar(value=False)
+        self._t5_preserve_tags_on_shorten = ctk.BooleanVar(value=False)
+        self._t5_title_max_entry: ctk.CTkEntry | None = None
+        self._t5_full_schema_only_widgets: list[object] = []
         self._t5_tag_en = [ctk.BooleanVar(value=False) for _ in range(5)]
         self._t5_tag_txt = [ctk.StringVar(value="") for _ in range(5)]
         self._t5_preset_name = ctk.StringVar(value="")
@@ -220,6 +230,8 @@ class FileToolsApp(ctk.CTk):
         self._t5_ffprobe_cache: dict[str, tuple[int | None, int | None]] = {}
         self._t5_preset_menu: ctk.CTkOptionMenu | None = None
         self._t5_rebuild_after_id: str | None = None
+        self._rename_undo_stack: tuple[str, list[tuple[int, str, str, str]]] | None = None
+        self._header_undo_btn: ctk.CTkButton | None = None
         self._t3_sort_col = "path"
         self._t3_sort_desc = False
         self._t4_sort_col = "path"
@@ -230,6 +242,7 @@ class FileToolsApp(ctk.CTk):
         self._appearance_mode = ctk.StringVar(value="dark")
         self._ui_language = ctk.StringVar(value="en")
         self._settings_dialog: ctk.CTkToplevel | None = None
+        self._work_status = ctk.StringVar(value="")
 
         self._load_settings()
         self._translator = Translator(_RES_DIR / "locales", self._norm_lang_code(self._ui_language.get()))
@@ -319,7 +332,8 @@ class FileToolsApp(ctk.CTk):
         self._t5_resolution_mode = ctk.StringVar(value=self._t5_resolution_mode.get())
         self._t5_dry = ctk.BooleanVar(value=self._t5_dry.get())
         self._t5_use_selected = ctk.BooleanVar(value=self._t5_use_selected.get())
-        self._t5_tags_only_mode = ctk.BooleanVar(value=self._t5_tags_only_mode.get())
+        self._t5_append_tags_only = ctk.BooleanVar(value=self._t5_append_tags_only.get())
+        self._t5_preserve_tags_on_shorten = ctk.BooleanVar(value=self._t5_preserve_tags_on_shorten.get())
         self._t5_tag_en = [ctk.BooleanVar(value=self._t5_tag_en[i].get()) for i in range(5)]
         self._t5_tag_txt = [ctk.StringVar(value=self._t5_tag_txt[i].get()) for i in range(5)]
         self._t5_preset_name = ctk.StringVar(value=self._t5_preset_name.get())
@@ -351,6 +365,24 @@ class FileToolsApp(ctk.CTk):
         ):
             self._t4_trace_ids.append((v, v.trace_add("write", cb)))
 
+    def _t5_shorten_scope_effective(self) -> str:
+        """``title_only`` = shorten head before trailing ``[…]``; ``full_stem`` = cap whole stem."""
+        return "title_only" if self._t5_preserve_tags_on_shorten.get() else "full_stem"
+
+    def _t5_on_append_tags_only_change(self, *_a: object) -> None:
+        self._t5_apply_mode_dependent_ui_state()
+        self._t5_on_schema_preview_change()
+
+    def _t5_apply_mode_dependent_ui_state(self) -> None:
+        full = not bool(self._t5_append_tags_only.get())
+
+        for w in self._t5_full_schema_only_widgets:
+            try:
+                if int(w.winfo_exists()):
+                    w.configure(state="normal" if full else "disabled")
+            except TclError:
+                pass
+
     def _cancel_t5_tree_rebuild_after(self) -> None:
         aid = self._t5_rebuild_after_id
         if aid is not None:
@@ -367,7 +399,8 @@ class FileToolsApp(ctk.CTk):
 
     def _t5_run_scheduled_tree_rebuild(self) -> None:
         self._t5_rebuild_after_id = None
-        self._t5_rebuild_tree()
+        if not self._t5_try_refresh_tree_leaves_only():
+            self._t5_rebuild_tree()
 
     def _remove_t5_traces(self) -> None:
         self._cancel_t5_tree_rebuild_after()
@@ -381,10 +414,13 @@ class FileToolsApp(ctk.CTk):
     def _install_t5_traces(self) -> None:
         """Refresh Tab 5 preview when schema options (tags, title length, …) change."""
         self._remove_t5_traces()
-        cb_now = lambda *_: self._t5_rebuild_tree()
+        cb_filter = lambda *_: self._t5_rebuild_tree()
+        cb_schema_leaf = lambda *_: self._t5_on_schema_preview_change()
         cb_tag_text = lambda *_: self._t5_schedule_rebuild_tree()
         for i in range(5):
-            self._t5_trace_ids.append((self._t5_tag_en[i], self._t5_tag_en[i].trace_add("write", cb_now)))
+            self._t5_trace_ids.append(
+                (self._t5_tag_en[i], self._t5_tag_en[i].trace_add("write", cb_schema_leaf)),
+            )
             self._t5_trace_ids.append((self._t5_tag_txt[i], self._t5_tag_txt[i].trace_add("write", cb_tag_text)))
         for v in (
             self._t5_filter,
@@ -393,13 +429,22 @@ class FileToolsApp(ctk.CTk):
             self._t5_filter_combine,
             self._t5_filter_exclude_field,
             self._t5_filter_exclude_combine,
-            self._t5_title_max,
+        ):
+            self._t5_trace_ids.append((v, v.trace_add("write", cb_filter)))
+        self._t5_trace_ids.append((self._t5_title_max, self._t5_title_max.trace_add("write", cb_tag_text)))
+        self._t5_trace_ids.append(
+            (self._t5_append_tags_only, self._t5_append_tags_only.trace_add("write", self._t5_on_append_tags_only_change)),
+        )
+        self._t5_trace_ids.append(
+            (self._t5_preserve_tags_on_shorten, self._t5_preserve_tags_on_shorten.trace_add("write", cb_schema_leaf)),
+        )
+        for v in (
             self._t5_include_year,
             self._t5_include_resolution,
             self._t5_include_rating,
             self._t5_resolution_mode,
         ):
-            self._t5_trace_ids.append((v, v.trace_add("write", cb_now)))
+            self._t5_trace_ids.append((v, v.trace_add("write", cb_schema_leaf)))
 
     def _cancel_t4_preview_after(self) -> None:
         self._t4_preview_scheduled = False
@@ -613,6 +658,33 @@ class FileToolsApp(ctk.CTk):
         except TclError:
             pass
 
+    def _clear_work_progress(self) -> None:
+        self._work_status.set("")
+
+    def _work_progress_rename(self, cur: int, total: int) -> None:
+        if total <= 0:
+            self._clear_work_progress()
+            return
+        self._work_status.set(self._tr("common.progress_rename", cur=cur, total=total))
+
+    def _work_progress_move(self, cur: int, total: int) -> None:
+        if total <= 0:
+            self._clear_work_progress()
+            return
+        self._work_status.set(self._tr("common.progress_move", cur=cur, total=total))
+
+    def _work_progress_fill(self, cur: int, total: int) -> None:
+        if total <= 0:
+            self._clear_work_progress()
+            return
+        self._work_status.set(self._tr("common.progress_fill", cur=cur, total=total))
+
+    def _work_progress_probe(self, cur: int, total: int) -> None:
+        if total <= 0:
+            self._clear_work_progress()
+            return
+        self._work_status.set(self._tr("common.progress_probe", cur=cur, total=total))
+
     def _tk_keepalive(self, step: int) -> None:
         """Pump Tk events during long work so Windows does not show 'Not responding'."""
         if step % 100 == 0:
@@ -681,11 +753,77 @@ class FileToolsApp(ctk.CTk):
         self._log_box.delete("1.0", "end")
         self._log_box.configure(state="disabled")
 
+    def _sync_header_undo_button(self) -> None:
+        ok = bool(self._rename_undo_stack and len(self._rename_undo_stack[1]) > 0)
+        b = self._header_undo_btn
+        if b is None:
+            return
+        try:
+            if int(b.winfo_exists()) == 0:
+                return
+        except TclError:
+            return
+        b.configure(state="normal" if ok else "disabled")
+
+    def _register_rename_undo_stack(self, tab: str, stack: list[tuple[int, str, str, str]]) -> None:
+        if stack:
+            self._rename_undo_stack = (tab, stack)
+        else:
+            self._rename_undo_stack = None
+        self._sync_header_undo_button()
+
+    def _clear_rename_undo_stack(self) -> None:
+        self._rename_undo_stack = None
+        self._sync_header_undo_button()
+
+    def _undo_last_disk_rename(self) -> None:
+        if not self._rename_undo_stack:
+            self._log(self._tr("log.undo_rename_nothing"))
+            return
+        tab, recs = self._rename_undo_stack
+        if tab == "t3":
+            rows = self._rows
+            dry = self._t3_dry.get()
+        elif tab == "t4":
+            rows = self._t4_rows
+            dry = self._t4_dry.get()
+        else:
+            rows = self._t5_rows
+            dry = self._t5_dry.get()
+        n, lines = undo_file_renames(
+            recs,
+            rows,
+            dry_run=dry,
+            keep_alive=self._tk_keepalive,
+            keep_alive_every=35,
+        )
+        self._log_many_lines(lines)
+        if dry:
+            self._log(self._tr("log.undo_rename_done_preview", n=len(recs)))
+        else:
+            self._log(self._tr("log.undo_rename_done", n=n))
+            self._clear_rename_undo_stack()
+            if tab == "t3":
+                self._t3_rebuild_tree()
+            elif tab == "t4":
+                self._t4_rebuild_tree()
+                self._t4_refresh_preview()
+            else:
+                self._t5_rebuild_tree()
+            self._save_settings()
+
     def _build_ui(self) -> None:
         self._browse_w = max(88, _btn_w(self._tr("common.browse")))
         head = ctk.CTkFrame(self, fg_color=_UI_SURFACE)
         head.pack(fill="x", padx=10, pady=(10, 0))
         _label(head, text=self._tr("app.brand"), font=ctk.CTkFont(size=17, weight="bold")).pack(side="left")
+        _label(
+            head,
+            textvariable=self._work_status,
+            anchor="w",
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=12),
+        ).pack(side="left", padx=(14, 8), fill="x", expand=True)
         ctk.CTkButton(
             head,
             text="\u2699",
@@ -696,6 +834,18 @@ class FileToolsApp(ctk.CTk):
             fg_color=("gray78", "gray28"),
             hover_color=("gray68", "gray38"),
         ).pack(side="right")
+        self._header_undo_btn = ctk.CTkButton(
+            head,
+            text=self._tr("common.undo_header"),
+            width=max(118, _btn_w(self._tr("common.undo_header"))),
+            height=32,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self._undo_last_disk_rename,
+            fg_color=_BTN_ACCENT,
+            hover_color=_BTN_ACCENT_HOVER,
+            state="disabled",
+        )
+        self._header_undo_btn.pack(side="right", padx=(0, 10))
 
         tabs = ctk.CTkTabview(self, fg_color=_UI_SURFACE)
         tabs.pack(fill="both", expand=True, padx=10, pady=(6, 4))
@@ -745,6 +895,7 @@ class FileToolsApp(ctk.CTk):
         self._log_box = ctk.CTkTextbox(log_f, height=200, activate_scrollbars=True)
         self._log_box.pack(fill="both", expand=True)
         self._log_box.configure(state="disabled")
+        self._sync_header_undo_button()
 
     def _pad(self) -> dict:
         return {"padx": 10, "pady": (4, 6)}
@@ -1710,44 +1861,82 @@ class FileToolsApp(ctk.CTk):
         self._place_ttk_tree_with_scrollbars(tree_frame, self._t5_tree)
         self._t5_tree.bind("<Button-3>", self._t5_tree_context_menu)
 
-        opt = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
-        opt.pack_propagate(False)
-        opt.pack(fill="x", padx=10, pady=(2, 0))
-        _label(opt, text=self._tr("t5.title_max"), width=200, anchor="w").pack(side="left")
-        ctk.CTkEntry(opt, textvariable=self._t5_title_max, width=56).pack(side="left", padx=(0, 12))
-        ctk.CTkCheckBox(opt, text=self._tr("t5.include_year"), variable=self._t5_include_year).pack(
-            side="left", padx=(0, 10)
+        self._t5_full_schema_only_widgets = []
+        self._t5_title_max_entry = None
+
+        inc_fr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        inc_fr.pack(fill="x", padx=10, pady=(4, 2))
+        _label(
+            inc_fr,
+            text=self._tr("t5.from_csv_label"),
+            anchor="w",
+            wraplength=880,
+        ).pack(fill="x", anchor="w", pady=(0, 2))
+        inc_row = ctk.CTkFrame(inc_fr, fg_color=_UI_SURFACE)
+        inc_row.pack(fill="x")
+        cb_y = ctk.CTkCheckBox(inc_row, text=self._tr("t5.include_year"), variable=self._t5_include_year)
+        cb_y.pack(side="left", padx=(0, 12))
+        self._t5_full_schema_only_widgets.append(cb_y)
+        cb_res = ctk.CTkCheckBox(
+            inc_row, text=self._tr("t5.include_resolution"), variable=self._t5_include_resolution
         )
+        cb_res.pack(side="left", padx=(0, 12))
+        self._t5_full_schema_only_widgets.append(cb_res)
+        cb_rt = ctk.CTkCheckBox(inc_row, text=self._tr("t5.include_rating"), variable=self._t5_include_rating)
+        cb_rt.pack(side="left", padx=(0, 12))
+        self._t5_full_schema_only_widgets.append(cb_rt)
+
+        title_fr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        title_fr.pack(fill="x", padx=10, pady=(2, 0))
+        title_top = ctk.CTkFrame(title_fr, fg_color=_UI_SURFACE)
+        title_top.pack(fill="x")
+        _label(title_top, text=self._tr("t5.title_max"), width=160, anchor="w").pack(side="left", padx=(0, 6))
+        self._t5_title_max_entry = ctk.CTkEntry(title_top, textvariable=self._t5_title_max, width=56)
+        self._t5_title_max_entry.pack(side="left", padx=(0, 12))
         ctk.CTkCheckBox(
-            opt, text=self._tr("t5.include_resolution"), variable=self._t5_include_resolution
-        ).pack(side="left", padx=(0, 10))
-        ctk.CTkCheckBox(opt, text=self._tr("t5.include_rating"), variable=self._t5_include_rating).pack(
-            side="left", padx=(0, 10)
-        )
+            title_top,
+            text=self._tr("t5.preserve_tags_on_shorten"),
+            variable=self._t5_preserve_tags_on_shorten,
+        ).pack(side="left", padx=(0, 8))
+        _label(
+            title_fr,
+            text=self._tr("t5.preserve_tags_hint"),
+            anchor="w",
+            justify="left",
+            wraplength=880,
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=11),
+        ).pack(fill="x", anchor="w", pady=(2, 0))
 
         rr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
         rr.pack_propagate(False)
         rr.pack(fill="x", padx=10, pady=(0, 2))
         _label(rr, text=self._tr("t5.resolution_mode"), width=200, anchor="w").pack(side="left")
-        ctk.CTkRadioButton(
+        rb_hp = ctk.CTkRadioButton(
             rr,
             text=self._tr("t5.res_heightp"),
             variable=self._t5_resolution_mode,
             value="heightp",
-        ).pack(side="left", padx=(0, 12))
-        ctk.CTkRadioButton(
+        )
+        rb_hp.pack(side="left", padx=(0, 12))
+        self._t5_full_schema_only_widgets.append(rb_hp)
+        rb_wh = ctk.CTkRadioButton(
             rr,
             text=self._tr("t5.res_wxh"),
             variable=self._t5_resolution_mode,
             value="wxh",
-        ).pack(side="left", padx=(0, 12))
-        ctk.CTkButton(
+        )
+        rb_wh.pack(side="left", padx=(0, 12))
+        self._t5_full_schema_only_widgets.append(rb_wh)
+        probe_btn = ctk.CTkButton(
             rr,
             text=self._tr("t5.refresh_probe"),
             width=_btn_w(self._tr("t5.refresh_probe")),
             height=_BTN_H,
             command=self._t5_refresh_probe,
-        ).pack(side="left")
+        )
+        probe_btn.pack(side="left")
+        self._t5_full_schema_only_widgets.append(probe_btn)
 
         _label(
             parent,
@@ -1758,12 +1947,23 @@ class FileToolsApp(ctk.CTk):
             text_color=_LABEL_HINT,
             font=ctk.CTkFont(size=11),
         ).pack(fill="x", padx=10, pady=(0, 2))
+
+        append_fr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        append_fr.pack(fill="x", padx=10, pady=(0, 2))
         ctk.CTkCheckBox(
+            append_fr,
+            text=self._tr("t5.append_tags_only"),
+            variable=self._t5_append_tags_only,
+        ).pack(side="left", anchor="w")
+        _label(
             parent,
-            text=self._tr("t5.tags_only_mode"),
-            variable=self._t5_tags_only_mode,
-            fg_color=_UI_SURFACE,
-        ).pack(fill="x", padx=10, pady=(0, 2))
+            text=self._tr("t5.append_tags_hint_short"),
+            anchor="w",
+            justify="left",
+            wraplength=880,
+            text_color=_LABEL_HINT,
+            font=ctk.CTkFont(size=11),
+        ).pack(fill="x", padx=10, pady=(0, 4))
 
         for i in range(5):
             tag_row = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=30)
@@ -1810,7 +2010,7 @@ class FileToolsApp(ctk.CTk):
             command=self._t5_delete_preset_click,
         ).pack(side="left")
 
-        runf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=34)
+        runf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=40)
         runf.pack_propagate(False)
         runf.pack(fill="x", **pad)
         ctk.CTkButton(
@@ -1823,9 +2023,19 @@ class FileToolsApp(ctk.CTk):
         ctk.CTkCheckBox(runf, text=self._tr("t3.preview_only"), variable=self._t5_dry).pack(
             side="left", padx=(0, 12)
         )
-        ctk.CTkCheckBox(runf, text=self._tr("t5.selected_only"), variable=self._t5_use_selected).pack(
-            side="left", padx=(0, 12)
+        sel_box = ctk.CTkFrame(
+            runf,
+            fg_color=_T5_SEL_BOX_BG,
+            corner_radius=8,
+            border_width=2,
+            border_color=_T5_SEL_BOX_BORDER,
         )
+        sel_box.pack(side="left", padx=(4, 14), pady=3)
+        ctk.CTkCheckBox(
+            sel_box,
+            text=self._tr("t5.selected_only"),
+            variable=self._t5_use_selected,
+        ).pack(side="left", padx=10, pady=6)
         ctk.CTkButton(
             runf,
             text=self._tr("t3.rename_disk"),
@@ -1836,6 +2046,7 @@ class FileToolsApp(ctk.CTk):
             command=self._t5_run_renames,
         ).pack(side="left")
 
+        self._t5_apply_mode_dependent_ui_state()
         self._t5_sync_preset_menu_from_disk()
 
     # --- Tab 5 (schema rename) ---
@@ -1884,6 +2095,8 @@ class FileToolsApp(ctk.CTk):
             "resolution_mode": (self._t5_resolution_mode.get() or "heightp").strip(),
             "tag_enabled": [bool(self._t5_tag_en[i].get()) for i in range(5)],
             "tag_text": [self._t5_tag_txt[i].get() for i in range(5)],
+            "append_tags_only": bool(self._t5_append_tags_only.get()),
+            "preserve_tags_on_shorten": bool(self._t5_preserve_tags_on_shorten.get()),
         }
 
     def _t5_apply_preset_dict(self, d: dict) -> None:
@@ -1894,7 +2107,7 @@ class FileToolsApp(ctk.CTk):
             tml = int(tml)
         except (TypeError, ValueError):
             tml = 15
-        self._t5_title_max.set(str(max(1, min(200, tml))))
+        self._t5_title_max.set(str(max(0, min(200, tml))))
         self._t5_include_year.set(bool(d.get("include_year", True)))
         self._t5_include_resolution.set(bool(d.get("include_resolution", True)))
         self._t5_include_rating.set(bool(d.get("include_rating", True)))
@@ -1910,6 +2123,31 @@ class FileToolsApp(ctk.CTk):
             for i in range(5):
                 if i < len(tt):
                     self._t5_tag_txt[i].set(str(tt[i] or ""))
+        ato = d.get("append_tags_only")
+        if isinstance(ato, bool):
+            self._t5_append_tags_only.set(ato)
+        else:
+            nm = d.get("name_mode")
+            if isinstance(nm, str):
+                nmx = nm.strip().lower()
+                if nmx in ("tags_append", "tags_append_shorten"):
+                    self._t5_append_tags_only.set(True)
+                elif nmx == "full_schema":
+                    self._t5_append_tags_only.set(False)
+            elif bool(d.get("tags_shorten_title", False)):
+                self._t5_append_tags_only.set(True)
+            else:
+                self._t5_append_tags_only.set(False)
+        pv = d.get("preserve_tags_on_shorten")
+        if isinstance(pv, bool):
+            self._t5_preserve_tags_on_shorten.set(pv)
+        else:
+            ss = d.get("shorten_scope")
+            if isinstance(ss, str) and ss.strip().lower() == "title_only":
+                self._t5_preserve_tags_on_shorten.set(True)
+            elif isinstance(ss, str) and ss.strip().lower() == "full_stem":
+                self._t5_preserve_tags_on_shorten.set(False)
+        self._t5_apply_mode_dependent_ui_state()
         self._t5_rebuild_tree()
 
     def _t5_sync_preset_menu_from_disk(self) -> None:
@@ -2109,21 +2347,95 @@ class FileToolsApp(ctk.CTk):
             self._t5_sort_desc = False
         self._t5_rebuild_tree()
 
+    def _t5_prior_leaf_for_merge(self, row: dict[str, str]) -> str:
+        """
+        Source leaf for ``merge_extra_bracket_tags_into_leaf``. Prefer ``new_leaf`` after Fill.
+        With **append-tags-only** preview, derive from ``file_name`` + slot options. With full
+        schema and **protect tags** on, use ``file_name`` so existing ``[…]`` are visible to merge
+        even when no slot changed the name yet.
+        """
+        nl = (row.get("new_leaf") or "").strip()
+        if nl:
+            return nl
+        fn = (row.get("file_name") or "").strip()
+        if not fn:
+            return ""
+        if self._t5_append_tags_only.get():
+            opts = self._t5_schema_options_kwargs()
+            if self._t5_shorten_scope_effective() == "full_stem":
+                work = append_schema_tags_to_leaf(
+                    fn,
+                    tag_enabled=opts["tag_enabled"],
+                    tag_text=opts["tag_text"],
+                )
+                built, _w = truncate_leaf_stem_to_max_chars(work, opts["title_max_len"])
+                return built.strip() if built.strip() else ""
+            built, _w = build_leaf_tags_only_mode(
+                row,
+                title_max_len=opts["title_max_len"],
+                tag_enabled=opts["tag_enabled"],
+                tag_text=opts["tag_text"],
+            )
+            return built.strip() if built.strip() else ""
+        # Full schema: use the real file name so ``merge_extra_bracket_tags_into_leaf`` can
+        # see existing ``[…]`` tags. (Previously we only used a preview when slots changed
+        # the name — then “protect tags” had nothing to merge unless “append only” was on.)
+        if self._t5_preserve_tags_on_shorten.get():
+            return fn
+        appended = append_schema_tags_to_leaf(
+            fn,
+            tag_enabled=[self._t5_tag_en[k].get() for k in range(5)],
+            tag_text=[self._t5_tag_txt[k].get() for k in range(5)],
+        )
+        return appended if appended.strip() != fn.strip() else ""
+
     def _t5_compute_leaf_for_row(self, row: dict[str, str]) -> tuple[str, str]:
+        opts = self._t5_schema_options_kwargs()
+        scope = self._t5_shorten_scope_effective()
+        if self._t5_append_tags_only.get():
+            base_leaf = (row.get("new_leaf") or "").strip() or (row.get("file_name") or "").strip()
+            if not base_leaf:
+                return "", ""
+            if scope == "full_stem":
+                work = append_schema_tags_to_leaf(
+                    base_leaf,
+                    tag_enabled=opts["tag_enabled"],
+                    tag_text=opts["tag_text"],
+                )
+                return truncate_leaf_stem_to_max_chars(work, opts["title_max_len"])
+            return build_leaf_tags_only_mode(
+                row,
+                title_max_len=opts["title_max_len"],
+                tag_enabled=opts["tag_enabled"],
+                tag_text=opts["tag_text"],
+            )
         w, h = self._t5_dims_for_row(row)
         leaf, warn = build_schema_rename_leaf(
             row,
             video_width=w,
             video_height=h,
-            **self._t5_schema_options_kwargs(),
+            **opts,
         )
+        if leaf:
+            prior = self._t5_prior_leaf_for_merge(row)
+            if prior:
+                # “Protect tags” + full schema: with **no** slot checked, merge keeps existing
+                # ``[…]`` from the file name. With **any** slot checked, the schema-built slots
+                # replace those tags; merge is skipped so old brackets are not duplicated.
+                slot_on = any(self._t5_tag_en[i].get() for i in range(5))
+                if self._t5_preserve_tags_on_shorten.get():
+                    if not slot_on:
+                        leaf = merge_extra_bracket_tags_into_leaf(prior, leaf)
+                else:
+                    leaf = merge_extra_bracket_tags_into_leaf(prior, leaf)
+            if scope == "full_stem":
+                leaf2, tw = truncate_leaf_stem_to_max_chars(leaf, opts["title_max_len"])
+                leaf = leaf2
+                if tw and not warn:
+                    warn = tw
         return leaf, warn
 
-    def _t5_rebuild_tree(self) -> None:
-        if not hasattr(self, "_t5_tree"):
-            return
-        self._cancel_t5_tree_rebuild_after()
-        prev = self._t5_selected_indices()
+    def _t5_build_visible_tree_rows(self) -> list[tuple[str, tuple[object, ...]]]:
         visible = [i for i, row in enumerate(self._t5_rows) if self._t5_row_visible(row)]
         visible.sort(
             key=lambda idx: self._t5_sort_key(self._t5_rows[idx], self._t5_sort_col),
@@ -2147,6 +2459,47 @@ class FileToolsApp(ctk.CTk):
                     ),
                 )
             )
+        return rows_out
+
+    def _t5_try_refresh_tree_leaves_only(self) -> bool:
+        """
+        If the tree already lists the same row iids in the same order, only refresh cell
+        values (avoids delete+reinsert — that was especially slow when toggling tag slots).
+        """
+        if not hasattr(self, "_t5_tree"):
+            return True
+        rows_out = self._t5_build_visible_tree_rows()
+        want_ids = [iid for iid, _ in rows_out]
+        have_ids = list(self._t5_tree.get_children())
+        if want_ids != have_ids:
+            return False
+        prev = self._t5_selected_indices()
+        for step, (iid, vals) in enumerate(rows_out):
+            self._t5_tree.item(iid, values=vals)
+            if step > 0 and step % 400 == 0:
+                try:
+                    self.update_idletasks()
+                except TclError:
+                    pass
+        self._ttk_restore_row_selection(self._t5_tree, prev)
+        try:
+            self.update_idletasks()
+        except TclError:
+            pass
+        return True
+
+    def _t5_on_schema_preview_change(self, *_args: object) -> None:
+        """Schema options that only change the proposed leaf column — prefer in-place tree update."""
+        self._cancel_t5_tree_rebuild_after()
+        if not self._t5_try_refresh_tree_leaves_only():
+            self._t5_rebuild_tree()
+
+    def _t5_rebuild_tree(self) -> None:
+        if not hasattr(self, "_t5_tree"):
+            return
+        self._cancel_t5_tree_rebuild_after()
+        prev = self._t5_selected_indices()
+        rows_out = self._t5_build_visible_tree_rows()
         self._ttk_tree_replace_rows(self._t5_tree, rows_out)
         self._ttk_restore_row_selection(self._t5_tree, prev)
 
@@ -2190,49 +2543,55 @@ class FileToolsApp(ctk.CTk):
             self._log(self._tr("log.t5_no_ffprobe"))
             return
         vis = self._t5_visible_indices()
+        total = len(vis)
         ok = 0
-        for step, i in enumerate(vis):
-            if step > 0 and step % 15 == 0:
-                self._tk_keepalive(step)
-            row = self._t5_rows[i]
-            key = self._t5_cache_key_for_row(row)
-            if not key:
-                continue
-            w, h, err = ffprobe_video_size(key, ffprobe_exe=exe)
-            if w and h:
-                self._t5_ffprobe_cache[key] = (w, h)
-                ok += 1
-            elif err:
-                fp = row.get("file_path", "")
-                self._log(self._tr("log.t5_probe_row_fail", path=fp, err=err[:120]))
-        self._log(self._tr("log.t5_probed", ok=ok, total=len(vis)))
-        self._t5_rebuild_tree()
+        try:
+            if total > 0:
+                self._work_progress_probe(0, total)
+            for step, i in enumerate(vis):
+                row = self._t5_rows[i]
+                key = self._t5_cache_key_for_row(row)
+                if key:
+                    w, h, err = ffprobe_video_size(key, ffprobe_exe=exe)
+                    if w and h:
+                        self._t5_ffprobe_cache[key] = (w, h)
+                        ok += 1
+                    elif err:
+                        fp = row.get("file_path", "")
+                        self._log(self._tr("log.t5_probe_row_fail", path=fp, err=err[:120]))
+                done = step + 1
+                if total > 0 and (done == 1 or done % 10 == 0 or done == total):
+                    self._work_progress_probe(done, total)
+                    self._tk_keepalive(step)
+            self._log(self._tr("log.t5_probed", ok=ok, total=len(vis)))
+            self._t5_rebuild_tree()
+        finally:
+            self._clear_work_progress()
 
     def _t5_fill_new_leaf(self, *, silent: bool = False) -> None:
         idxs = self._t5_selected_indices() if self._t5_use_selected.get() else self._t5_visible_indices()
         n = 0
-        tags_only = bool(self._t5_tags_only_mode.get())
-        for step, i in enumerate(idxs):
-            if step > 0 and step % 60 == 0:
-                self._tk_keepalive(step)
-            if i < 0 or i >= len(self._t5_rows):
-                continue
-            row = self._t5_rows[i]
-            if tags_only:
-                base_leaf = (row.get("new_leaf") or "").strip() or (row.get("file_name") or "").strip()
-                leaf = append_schema_tags_to_leaf(
-                    base_leaf,
-                    tag_enabled=[self._t5_tag_en[k].get() for k in range(5)],
-                    tag_text=[self._t5_tag_txt[k].get() for k in range(5)],
-                )
-            else:
+        total = len(idxs)
+        try:
+            if total > 0:
+                self._work_progress_fill(0, total)
+            for step, i in enumerate(idxs):
+                if i < 0 or i >= len(self._t5_rows):
+                    continue
+                row = self._t5_rows[i]
                 leaf, _w = self._t5_compute_leaf_for_row(row)
-            if leaf:
-                self._t5_rows[i]["new_leaf"] = leaf
-                n += 1
-        if not silent:
-            self._log(self._tr("log.t5_fill_done", n=n))
-        self._t5_rebuild_tree()
+                if leaf:
+                    self._t5_rows[i]["new_leaf"] = leaf
+                    n += 1
+                done = step + 1
+                if total > 0 and (done == 1 or done % 40 == 0 or done == total):
+                    self._work_progress_fill(done, total)
+                    self._tk_keepalive(step)
+            if not silent:
+                self._log(self._tr("log.t5_fill_done", n=n))
+            self._t5_rebuild_tree()
+        finally:
+            self._clear_work_progress()
 
     def _t5_run_renames(self) -> None:
         try:
@@ -2250,17 +2609,25 @@ class FileToolsApp(ctk.CTk):
         # new_leaf is only updated on Fill; re-fill from current schema so tag/title changes apply.
         self._t5_fill_new_leaf(silent=True)
         dry = self._t5_dry.get()
-        renamed, skipped, log_lines = apply_file_renames(
-            self._t5_rows,
-            dry_run=dry,
-            only_indices=rename_indices,
-            keep_alive=self._tk_keepalive,
-            keep_alive_every=35,
-        )
-        self._log_many_lines(log_lines)
-        self._log(self._tr("log.t5_rename_summary", renamed=renamed, skipped=skipped, dry=dry))
-        self._t5_rebuild_tree()
-        self._save_settings()
+        undo_rec: list[tuple[int, str, str, str]] = []
+        try:
+            renamed, skipped, log_lines = apply_file_renames(
+                self._t5_rows,
+                dry_run=dry,
+                only_indices=rename_indices,
+                keep_alive=self._tk_keepalive,
+                keep_alive_every=35,
+                progress=self._work_progress_rename,
+                undo_stack=undo_rec,
+            )
+            self._log_many_lines(log_lines)
+            self._log(self._tr("log.t5_rename_summary", renamed=renamed, skipped=skipped, dry=dry))
+            self._t5_rebuild_tree()
+            self._save_settings()
+            if not dry and renamed > 0 and undo_rec:
+                self._register_rename_undo_stack("t5", undo_rec)
+        finally:
+            self._clear_work_progress()
 
     # --- Tab 1 ---
     def _t1_reset_graphql_path(self) -> None:
@@ -3272,24 +3639,32 @@ class FileToolsApp(ctk.CTk):
             pass
         only = self._t3_only_under.get().strip() or None
         dry = self._t3_dry.get()
-        renamed, skipped, lines = apply_file_renames(
-            self._rows,
-            only_under_folder=only,
-            dry_run=dry,
-            keep_alive=self._tk_keepalive,
-            keep_alive_every=35,
-        )
-        self._log_many_lines(lines)
-        self._log(
-            self._tr(
-                "log.t3_rename_done",
-                preview=self._tr("log.preview_prefix") if dry else "",
-                renamed=renamed,
-                skipped=skipped,
-            ),
-        )
-        self._t3_rebuild_tree()
-        self._save_settings()
+        undo_rec: list[tuple[int, str, str, str]] = []
+        try:
+            renamed, skipped, lines = apply_file_renames(
+                self._rows,
+                only_under_folder=only,
+                dry_run=dry,
+                keep_alive=self._tk_keepalive,
+                keep_alive_every=35,
+                progress=self._work_progress_rename,
+                undo_stack=undo_rec,
+            )
+            self._log_many_lines(lines)
+            self._log(
+                self._tr(
+                    "log.t3_rename_done",
+                    preview=self._tr("log.preview_prefix") if dry else "",
+                    renamed=renamed,
+                    skipped=skipped,
+                ),
+            )
+            self._t3_rebuild_tree()
+            self._save_settings()
+            if not dry and renamed > 0 and undo_rec:
+                self._register_rename_undo_stack("t3", undo_rec)
+        finally:
+            self._clear_work_progress()
 
     def _t3_run_folder_rename(self) -> None:
         if not self._t3_fold_confirm.get():
@@ -3329,28 +3704,36 @@ class FileToolsApp(ctk.CTk):
                 return
         dry = self._t4_dry.get()
         self._log(self._tr("log.t4_move_only_header", mode=mode_label))
-        moved, skipped, lines = move_files_only(
-            self._t4_rows,
-            indices,
-            target_folder=target,
-            subfolder=self._t4_subfolder.get(),
-            dry_run=dry,
-            per_source_subfolder=per_source,
-            keep_alive=self._tk_keepalive,
-            keep_alive_every=35,
-        )
-        self._log_many_lines(lines)
-        self._log(
-            self._tr(
-                "log.t4_move_only_done",
-                preview=self._tr("log.preview_prefix") if dry else "",
-                moved=moved,
-                skipped=skipped,
-            ),
-        )
-        self._t4_rebuild_tree()
-        self._t4_refresh_preview()
-        self._save_settings()
+        undo_rec: list[tuple[int, str, str, str]] = []
+        try:
+            moved, skipped, lines = move_files_only(
+                self._t4_rows,
+                indices,
+                target_folder=target,
+                subfolder=self._t4_subfolder.get(),
+                dry_run=dry,
+                per_source_subfolder=per_source,
+                keep_alive=self._tk_keepalive,
+                keep_alive_every=35,
+                progress=self._work_progress_move,
+                undo_stack=undo_rec,
+            )
+            self._log_many_lines(lines)
+            self._log(
+                self._tr(
+                    "log.t4_move_only_done",
+                    preview=self._tr("log.preview_prefix") if dry else "",
+                    moved=moved,
+                    skipped=skipped,
+                ),
+            )
+            self._t4_rebuild_tree()
+            self._t4_refresh_preview()
+            self._save_settings()
+            if not dry and moved > 0 and undo_rec:
+                self._register_rename_undo_stack("t4", undo_rec)
+        finally:
+            self._clear_work_progress()
 
     def _t4_execute_move(self) -> None:
         use_selected = self._t4_use_selected.get()
@@ -3625,7 +4008,8 @@ class FileToolsApp(ctk.CTk):
             "t5_resolution_mode": self._t5_resolution_mode.get(),
             "t5_dry": self._t5_dry.get(),
             "t5_use_selected": self._t5_use_selected.get(),
-            "t5_tags_only_mode": self._t5_tags_only_mode.get(),
+            "t5_append_tags_only": self._t5_append_tags_only.get(),
+            "t5_preserve_tags_on_shorten": self._t5_preserve_tags_on_shorten.get(),
             "t5_tag_en": [self._t5_tag_en[i].get() for i in range(5)],
             "t5_tag_txt": [self._t5_tag_txt[i].get() for i in range(5)],
             "t5_preset_name": self._t5_preset_name.get(),
@@ -3703,7 +4087,26 @@ class FileToolsApp(ctk.CTk):
         g("t5_resolution_mode", self._t5_resolution_mode)
         g("t5_dry", self._t5_dry)
         g("t5_use_selected", self._t5_use_selected)
-        g("t5_tags_only_mode", self._t5_tags_only_mode)
+        if "t5_append_tags_only" in data:
+            g("t5_append_tags_only", self._t5_append_tags_only)
+        elif "t5_name_mode" in data:
+            nm = data.get("t5_name_mode")
+            if isinstance(nm, str):
+                x = nm.strip().lower()
+                if x in ("tags_append", "tags_append_shorten"):
+                    self._t5_append_tags_only.set(True)
+                elif x == "full_schema":
+                    self._t5_append_tags_only.set(False)
+        elif "t5_tags_only_mode" in data or "t5_tags_shorten_title" in data:
+            self._t5_append_tags_only.set(bool(data.get("t5_tags_only_mode", False)))
+        if "t5_preserve_tags_on_shorten" in data:
+            g("t5_preserve_tags_on_shorten", self._t5_preserve_tags_on_shorten)
+        elif "t5_shorten_scope" in data:
+            ss = data.get("t5_shorten_scope")
+            if isinstance(ss, str) and ss.strip().lower() == "title_only":
+                self._t5_preserve_tags_on_shorten.set(True)
+            elif isinstance(ss, str) and ss.strip().lower() == "full_stem":
+                self._t5_preserve_tags_on_shorten.set(False)
         g("t5_preset_name", self._t5_preset_name)
         g("ui_language", self._ui_language)
         te = data.get("t5_tag_en")

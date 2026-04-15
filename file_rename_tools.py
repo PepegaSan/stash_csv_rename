@@ -16,6 +16,15 @@ import subprocess
 import unicodedata
 from pathlib import Path
 from typing import Callable, Optional, Sequence
+
+# (row_index, path_before_rename, path_after_rename, new_leaf_value_before_rename)
+RenameUndoRecord = tuple[int, str, str, str]
+
+# Progress callback: ``(current, total)`` with ``current`` in ``0 … total`` (``total`` may be 0).
+ProgressCallback = Callable[[int, int], None]
+
+# Dry-run can otherwise build hundreds of thousands of log strings (memory + frozen log UI).
+_DRY_RUN_LOG_LINE_CAP = 8_000
 from urllib.parse import unquote
 from urllib.request import Request, urlopen
 
@@ -849,12 +858,18 @@ def apply_file_renames(
     dry_run: bool = False,
     keep_alive: Optional[Callable[[int], None]] = None,
     keep_alive_every: int = 40,
+    progress: Optional[ProgressCallback] = None,
+    undo_stack: Optional[list[RenameUndoRecord]] = None,
 ) -> tuple[int, int, list[str]]:
     """
     For each row with non-empty new_leaf different from file_name, rename on disk.
     If ``only_indices`` is set, only those row indices are considered (e.g. Tab 5 selection).
     Optional ``keep_alive(step)`` is called from the GUI main thread every ``keep_alive_every``
     processed rows so the window stays responsive during long batches.
+    Optional ``progress(current, total)`` reports how many row indices have been processed
+    (``total`` = number of indices in this run).
+    If ``undo_stack`` is given and ``dry_run`` is false, each successful rename appends
+    ``(row_index, old_path, new_path, new_leaf_before)`` for :func:`undo_file_renames`.
     Returns (renamed_count, skipped_count, log_lines).
     """
     log: list[str] = []
@@ -884,68 +899,137 @@ def apply_file_renames(
     else:
         row_indices = list(range(len(rows)))
 
+    total = len(row_indices)
+    if progress is not None and total > 0:
+        progress(0, total)
+
     for step, i in enumerate(row_indices):
         if keep_alive is not None and step > 0 and step % max(1, keep_alive_every) == 0:
             keep_alive(step)
-        row = rows[i]
-        raw_fp = row["file_path"].strip()
-        if not raw_fp:
-            skipped += 1
-            continue
-
-        resolved = resolve_csv_path_to_existing_file(raw_fp)
-        if resolved is None:
-            log.append(f"Skip (not a file): {raw_fp!r}")
-            skipped += 1
-            continue
-
-        old_full = resolved
-        row["file_path"] = str(old_full)
-        row["file_directory"] = str(old_full.parent)
-        row["file_name"] = old_full.name
-
-        if root_filter is not None:
-            try:
-                old_full.relative_to(root_filter)
-            except ValueError:
+        try:
+            row = rows[i]
+            raw_fp = row["file_path"].strip()
+            if not raw_fp:
                 skipped += 1
                 continue
 
-        leaf = old_full.name
-        new_leaf = (row.get("new_leaf") or "").strip()
-        if not new_leaf:
-            skipped += 1
-            continue
-        if any(sep in new_leaf for sep in "\\/:") or new_leaf in (".", ".."):
-            log.append(f"Skip (invalid new file name): {new_leaf!r}")
-            skipped += 1
-            continue
-        if new_leaf == leaf:
-            skipped += 1
-            continue
+            resolved = resolve_csv_path_to_existing_file(raw_fp)
+            if resolved is None:
+                log.append(f"Skip (not a file): {raw_fp!r}")
+                skipped += 1
+                continue
 
-        parent = old_full.parent
-        final_leaf = unique_leaf_in_dir(parent, new_leaf)
-        dest = parent / final_leaf
+            old_full = resolved
+            row["file_path"] = str(old_full)
+            row["file_directory"] = str(old_full.parent)
+            row["file_name"] = old_full.name
 
-        if dry_run:
-            log.append(f"[dry-run] {old_full} -> {dest}")
-            renamed += 1
-            continue
+            if root_filter is not None:
+                try:
+                    old_full.relative_to(root_filter)
+                except ValueError:
+                    skipped += 1
+                    continue
 
-        try:
-            old_full.rename(dest)
-            row["file_path"] = str(dest)
-            row["file_directory"] = str(dest.parent)
-            row["file_name"] = dest.name
-            row["new_leaf"] = ""
-            log.append(f"OK: {dest}")
-            renamed += 1
-        except OSError as e:
-            log.append(f"FAIL: {old_full} -> {dest}: {e}")
-            skipped += 1
+            leaf = old_full.name
+            new_leaf = (row.get("new_leaf") or "").strip()
+            if not new_leaf:
+                skipped += 1
+                continue
+            if any(sep in new_leaf for sep in "\\/:") or new_leaf in (".", ".."):
+                log.append(f"Skip (invalid new file name): {new_leaf!r}")
+                skipped += 1
+                continue
+            if new_leaf == leaf:
+                skipped += 1
+                continue
+
+            parent = old_full.parent
+            final_leaf = unique_leaf_in_dir(parent, new_leaf)
+            dest = parent / final_leaf
+
+            if dry_run:
+                if renamed < _DRY_RUN_LOG_LINE_CAP:
+                    log.append(f"[dry-run] {old_full} -> {dest}")
+                elif renamed == _DRY_RUN_LOG_LINE_CAP:
+                    log.append(
+                        "[dry-run] ... (further per-file preview lines omitted in log; "
+                        "rename counts in the summary are still complete.)"
+                    )
+                renamed += 1
+                continue
+
+            try:
+                old_full.rename(dest)
+                row["file_path"] = str(dest)
+                row["file_directory"] = str(dest.parent)
+                row["file_name"] = dest.name
+                row["new_leaf"] = ""
+                if undo_stack is not None:
+                    undo_stack.append((i, str(old_full), str(dest), new_leaf))
+                log.append(f"OK: {dest}")
+                renamed += 1
+            except OSError as e:
+                log.append(f"FAIL: {old_full} -> {dest}: {e}")
+                skipped += 1
+        finally:
+            done = step + 1
+            if progress is not None and total > 0:
+                if done == total or done % max(1, keep_alive_every) == 0:
+                    progress(done, total)
 
     return renamed, skipped, log
+
+
+def undo_file_renames(
+    records: Sequence[RenameUndoRecord],
+    rows: list[dict[str, str]],
+    *,
+    dry_run: bool = False,
+    keep_alive: Optional[Callable[[int], None]] = None,
+    keep_alive_every: int = 40,
+) -> tuple[int, list[str]]:
+    """
+    Reverse a single ``apply_file_renames`` or ``move_files_only`` batch. ``records`` must be in
+    the same forward order as that run; this function processes **last operation first**.
+    Each record: ``(row_index, path_before, path_after, new_leaf_before)``.
+    Uses ``shutil.move`` so cross-volume moves can be undone where the OS allows.
+    Returns (undone_count, log_lines).
+    """
+    log: list[str] = []
+    undone = 0
+    rev = list(records)[::-1]
+    total = len(rev)
+    for step, (i, old_p_s, new_p_s, prev_leaf) in enumerate(rev):
+        if keep_alive is not None and step > 0 and step % max(1, keep_alive_every) == 0:
+            keep_alive(step)
+        if i < 0 or i >= len(rows):
+            log.append(f"[undo] skip: row index out of range: {i}\n")
+            continue
+        old_p = Path(old_p_s)
+        new_p = Path(new_p_s)
+        if dry_run:
+            log.append(f"[undo dry-run] {new_p} -> {old_p}\n")
+            continue
+        if not new_p.is_file():
+            log.append(f"[undo] skip (not a file): {new_p}\n")
+            continue
+        if old_p.exists():
+            log.append(f"[undo] skip (target exists): {old_p}\n")
+            continue
+        try:
+            shutil.move(str(new_p), str(old_p))
+        except OSError as e:
+            log.append(f"[undo] FAIL {new_p} -> {old_p}: {e}\n")
+            continue
+        row = rows[i]
+        row["file_path"] = str(old_p)
+        row["file_directory"] = str(old_p.parent)
+        row["file_name"] = old_p.name
+        row["new_leaf"] = prev_leaf
+        log.append(f"[undo] OK: {new_p} -> {old_p}\n")
+        undone += 1
+    return undone, log
 
 
 def apply_prefix_suffix_to_rows(
@@ -1128,10 +1212,15 @@ def move_files_only(
     per_source_subfolder: bool = False,
     keep_alive: Optional[Callable[[int], None]] = None,
     keep_alive_every: int = 40,
+    progress: Optional[ProgressCallback] = None,
+    undo_stack: Optional[list[RenameUndoRecord]] = None,
 ) -> tuple[int, int, list[str]]:
     """
     Move files only (no Stash/API update).
     Optional ``keep_alive(step)`` is called every ``keep_alive_every`` processed files (GUI thread).
+    Optional ``progress(current, total)`` uses ``total = len(indices)``.
+    If ``undo_stack`` is given and ``dry_run`` is false, each successful move appends
+    ``(row_index, old_path, new_path, new_leaf_before)`` for :func:`undo_file_renames`.
     Returns (moved_count, skipped_count, log_lines).
     """
     log: list[str] = []
@@ -1152,57 +1241,76 @@ def move_files_only(
         except OSError as e:
             return 0, len(indices), [f"Cannot create target folder {target}: {e}"]
 
+    total = len(indices)
+    if progress is not None and total > 0:
+        progress(0, total)
+
     for step, i in enumerate(indices):
         if keep_alive is not None and step > 0 and step % max(1, keep_alive_every) == 0:
             keep_alive(step)
-        if i < 0 or i >= len(rows):
-            skipped += 1
-            continue
-        row = rows[i]
-        raw_fp = (row.get("file_path") or "").strip()
-        if not raw_fp:
-            log.append("Skip: empty file_path.")
-            skipped += 1
-            continue
-        resolved = resolve_csv_path_to_existing_file(raw_fp)
-        if resolved is None:
-            log.append(f"Skip (not a file): {raw_fp!r}")
-            skipped += 1
-            continue
-
-        old_full = resolved
-        if per_source_subfolder:
-            target_dir = old_full.parent / sub
-            try:
-                target_dir.mkdir(parents=True, exist_ok=True)
-            except OSError as e:
-                log.append(f"Cannot create per-source target folder {target_dir}: {e}")
-                skipped += 1
-                continue
-        else:
-            target_dir = target
-            if target_dir is None:
-                log.append("Internal error: target folder not resolved.")
-                skipped += 1
-                continue
-        dest_leaf = unique_leaf_in_dir(target_dir, old_full.name)
-        dest = target_dir / dest_leaf
-
-        if dry_run:
-            log.append(f"[dry-run] move {old_full} -> {dest}")
-            moved += 1
-            continue
         try:
-            shutil.move(str(old_full), str(dest))
-            moved += 1
-            row["file_path"] = str(dest)
-            row["file_directory"] = str(dest.parent)
-            row["file_name"] = dest.name
-            row["new_leaf"] = ""
-            log.append(f"OK: moved {old_full} -> {dest}")
-        except OSError as e:
-            log.append(f"Move failed: {old_full} -> {dest}: {e}")
-            skipped += 1
+            if i < 0 or i >= len(rows):
+                skipped += 1
+                continue
+            row = rows[i]
+            raw_fp = (row.get("file_path") or "").strip()
+            if not raw_fp:
+                log.append("Skip: empty file_path.")
+                skipped += 1
+                continue
+            resolved = resolve_csv_path_to_existing_file(raw_fp)
+            if resolved is None:
+                log.append(f"Skip (not a file): {raw_fp!r}")
+                skipped += 1
+                continue
+
+            old_full = resolved
+            if per_source_subfolder:
+                target_dir = old_full.parent / sub
+                try:
+                    target_dir.mkdir(parents=True, exist_ok=True)
+                except OSError as e:
+                    log.append(f"Cannot create per-source target folder {target_dir}: {e}")
+                    skipped += 1
+                    continue
+            else:
+                target_dir = target
+                if target_dir is None:
+                    log.append("Internal error: target folder not resolved.")
+                    skipped += 1
+                    continue
+            dest_leaf = unique_leaf_in_dir(target_dir, old_full.name)
+            dest = target_dir / dest_leaf
+            prev_new_leaf = (row.get("new_leaf") or "").strip()
+
+            if dry_run:
+                if moved < _DRY_RUN_LOG_LINE_CAP:
+                    log.append(f"[dry-run] move {old_full} -> {dest}")
+                elif moved == _DRY_RUN_LOG_LINE_CAP:
+                    log.append(
+                        "[dry-run] ... (further per-file preview lines omitted in log; "
+                        "move counts in the summary are still complete.)"
+                    )
+                moved += 1
+                continue
+            try:
+                shutil.move(str(old_full), str(dest))
+                moved += 1
+                row["file_path"] = str(dest)
+                row["file_directory"] = str(dest.parent)
+                row["file_name"] = dest.name
+                row["new_leaf"] = ""
+                if undo_stack is not None:
+                    undo_stack.append((i, str(old_full), str(dest), prev_new_leaf))
+                log.append(f"OK: moved {old_full} -> {dest}")
+            except OSError as e:
+                log.append(f"Move failed: {old_full} -> {dest}: {e}")
+                skipped += 1
+        finally:
+            done = step + 1
+            if progress is not None and total > 0:
+                if done == total or done % max(1, keep_alive_every) == 0:
+                    progress(done, total)
 
     return moved, skipped, log
 
@@ -1445,6 +1553,20 @@ def primary_label_for_schema_row(row: dict[str, str]) -> str:
     return Path(row.get("file_name") or "").stem
 
 
+def title_head_before_trailing_bracket_tags(label: str) -> str:
+    """
+    Text used for ``title_max_len`` in ``build_schema_rename_leaf``: trailing `` [a] [b]``
+    groups are **not** part of the title — they are treated like filename tags (same rule as
+    ``split_stem_trailing_bracket_groups`` on the stem) so truncation does not cut inside them.
+    """
+    t = (label or "").strip()
+    if not t:
+        return ""
+    head, _tail = split_stem_trailing_bracket_groups(t)
+    h = head.strip()
+    return h if h else t
+
+
 def sanitize_schema_label(s: str, *, max_len: int = 80) -> str:
     t = (s or "").strip()
     if not t:
@@ -1474,6 +1596,8 @@ def build_schema_rename_leaf(
     Build a file name like: ShortTitle (2020) - [HDR] [1080p] [4].ext
     Year in parentheses: Stash ``scene_date`` when present, else the video file's year from
     creation time (Windows) / birth time (macOS) / else last modification.
+    ``title_max_len`` 0 or negative: use the full sanitized title (still capped in ``sanitize_schema_label``).
+    Positive values 1–200 truncate the title stem.
     Returns (leaf, warning). leaf empty if result would be invalid.
     """
     warn = ""
@@ -1481,7 +1605,6 @@ def build_schema_rename_leaf(
         tml = int(title_max_len)
     except (TypeError, ValueError):
         tml = 15
-    tml = max(1, min(200, tml))
 
     te = list(tag_enabled or [])
     tt = list(tag_text or [])
@@ -1496,7 +1619,14 @@ def build_schema_rename_leaf(
     title = sanitize_schema_label(title_src, max_len=400)
     if not title:
         title = "video"
-    title_short = title[:tml]
+    # 0 (or negative): keep full sanitized title; 1–200: truncate only the head before any
+    # trailing ``[…]`` blocks (those are tags on the file name, not part of the title string).
+    if tml <= 0:
+        title_short = title
+    else:
+        tml = max(1, min(200, tml))
+        head_for_len = title_head_before_trailing_bracket_tags(title)
+        title_short = head_for_len[:tml]
 
     year_part = ""
     if include_year:
@@ -1590,3 +1720,150 @@ def append_schema_tags_to_leaf(
     stem = leaf[: -len(ext)] if ext else leaf
     stem = stem.rstrip() or "video"
     return f"{stem} {' '.join(add)}{ext}"
+
+
+def bracket_inner_tokens_from_leaf_stem(leaf: str) -> list[str]:
+    """Ordered ``[inner]`` contents from the file stem (extension ignored)."""
+    leaf = (leaf or "").strip()
+    if not leaf:
+        return []
+    ext = Path(leaf).suffix
+    stem = leaf[: -len(ext)] if ext else leaf
+    return [m.group(1).strip() for m in re.finditer(r"\[([^\]]+)\]", stem) if m.group(1).strip()]
+
+
+def merge_extra_bracket_tags_into_leaf(prior_leaf: str, schema_leaf: str) -> str:
+    """
+    When ``schema_leaf`` is rebuilt from title/year/slots (e.g. shorter title), keep any
+    ``[...]`` tokens that were present in ``prior_leaf`` but are missing from ``schema_leaf``.
+    Used after e.g. tags-only fill appended custom slots, then the user switches back to
+    full schema with a smaller title max length.
+    """
+    prior_leaf = (prior_leaf or "").strip()
+    schema_leaf = (schema_leaf or "").strip()
+    if not prior_leaf or not schema_leaf:
+        return schema_leaf or prior_leaf
+    old_tokens = bracket_inner_tokens_from_leaf_stem(prior_leaf)
+    if not old_tokens:
+        return schema_leaf
+    fresh_cf = {t.casefold() for t in bracket_inner_tokens_from_leaf_stem(schema_leaf)}
+    extras: list[str] = []
+    for t in old_tokens:
+        cf = t.casefold()
+        if cf in fresh_cf:
+            continue
+        fresh_cf.add(cf)
+        inn = sanitize_schema_label(t, max_len=40)
+        if inn:
+            extras.append(f"[{inn}]")
+    if not extras:
+        return schema_leaf
+    ext = Path(schema_leaf).suffix
+    stem = schema_leaf[: -len(ext)] if ext else schema_leaf
+    stem = stem.rstrip() or "video"
+    return f"{stem} {' '.join(extras)}{ext}"
+
+
+def split_stem_trailing_bracket_groups(stem: str) -> tuple[str, str]:
+    """
+    Split ``stem`` into (head, trailing_groups) where trailing_groups is a suffix of the form
+    `` [a] [b]`` (one or more bracket tokens). If there is no such suffix, returns ``(stem, "")``.
+    """
+    stem = (stem or "").rstrip()
+    if not stem:
+        return "", ""
+    m = re.search(r"((?:\s*\[[^\]]+\])+)\s*$", stem)
+    if not m:
+        return stem, ""
+    return stem[: m.start(1)].rstrip(), m.group(1)
+
+
+def build_leaf_tags_only_mode(
+    row: dict[str, str],
+    *,
+    title_max_len: object = 15,
+    tag_enabled: Optional[list[bool]] = None,
+    tag_text: Optional[list[str]] = None,
+) -> tuple[str, str]:
+    """
+    "Only add tags" behaviour: append checked ``[slot]`` tokens to the current leaf, then shorten
+    only the leading stem (before trailing `` [...] `` groups) using ``title_max_len`` — same
+    rules as ``build_schema_rename_leaf`` (0 = full head, 1–200 = truncate).
+    """
+    warn = ""
+    base_leaf = ((row.get("new_leaf") or "").strip() or (row.get("file_name") or "").strip())
+    if not base_leaf:
+        return "", ""
+    if any(c in base_leaf for c in '\\/:*?"<>|'):
+        return "", "result contains illegal filename characters"
+
+    work = append_schema_tags_to_leaf(
+        base_leaf,
+        tag_enabled=tag_enabled,
+        tag_text=tag_text,
+    )
+    if not work.strip():
+        return "", ""
+
+    ext = Path(work).suffix
+    stem = work[: -len(ext)] if ext else work
+    head, tail = split_stem_trailing_bracket_groups(stem)
+
+    try:
+        tml = int(title_max_len)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        tml = 15
+
+    raw_head = head.strip()
+    if not raw_head:
+        raw_head = primary_label_for_schema_row(row).strip()
+    if not raw_head:
+        raw_head = Path(row.get("file_name") or "").stem or "video"
+
+    title = sanitize_schema_label(raw_head, max_len=400)
+    if not title:
+        title = "video"
+
+    if tml <= 0:
+        title_short = title
+    else:
+        cap = max(1, min(200, tml))
+        title_short = title[:cap]
+
+    new_stem = f"{title_short}{tail}".rstrip()
+    leaf = f"{new_stem}{ext}"
+    if any(c in leaf for c in '\\/:*?"<>|'):
+        return "", "result contains illegal filename characters"
+    if not leaf.strip():
+        return "", "empty file name"
+    return leaf, warn
+
+
+def truncate_leaf_stem_to_max_chars(leaf: str, title_max_len: object) -> tuple[str, str]:
+    """
+    Cap the full stem (everything before the extension) to ``title_max_len`` characters.
+    ``title_max_len`` ≤ 0 leaves the leaf unchanged. Uses the same 1–200 cap as schema title trim.
+    """
+    leaf = (leaf or "").strip()
+    if not leaf:
+        return "", ""
+    try:
+        tml = int(title_max_len)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        tml = 15
+    if tml <= 0:
+        return leaf, ""
+    ext = Path(leaf).suffix
+    stem = leaf[: -len(ext)] if ext else leaf
+    cap = max(1, min(200, tml))
+    if len(stem) <= cap:
+        return leaf, ""
+    stem = stem[:cap].rstrip()
+    if not stem:
+        stem = "video"
+    out = f"{stem}{ext}"
+    if any(c in out for c in '\\/:*?"<>|'):
+        return "", "result contains illegal filename characters"
+    if not out.strip():
+        return "", "empty file name"
+    return out, ""

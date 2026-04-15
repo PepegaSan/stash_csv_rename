@@ -36,8 +36,57 @@ row("common.cancel", "Cancel", "Abbrechen", "Cancelar", "Annuler")
 row("common.ok", "OK", "OK", "Aceptar", "OK")
 row("common.default", "Default", "Standard", "Predeterminado", "Défaut")
 row("common.log", "Log", "Protokoll", "Registro", "Journal")
+row(
+    "common.progress_rename",
+    "Rename on disk: {cur} / {total}",
+    "Umbenennen: {cur} / {total}",
+    "Renombrar en disco: {cur} / {total}",
+    "Renommage sur disque : {cur} / {total}",
+)
+row(
+    "common.progress_move",
+    "Move on disk: {cur} / {total}",
+    "Verschieben: {cur} / {total}",
+    "Mover en disco: {cur} / {total}",
+    "Déplacement sur disque : {cur} / {total}",
+)
+row(
+    "common.progress_fill",
+    "Fill new names: {cur} / {total}",
+    "Namen füllen: {cur} / {total}",
+    "Rellenar nombres: {cur} / {total}",
+    "Remplir les noms : {cur} / {total}",
+)
+row(
+    "common.progress_probe",
+    "ffprobe: {cur} / {total}",
+    "ffprobe: {cur} / {total}",
+    "ffprobe: {cur} / {total}",
+    "ffprobe : {cur} / {total}",
+)
 row("common.save_log", "Save log to file…", "Protokoll speichern…", "Guardar registro en archivo…", "Enregistrer le journal…")
 row("common.clear_log", "Clear log", "Protokoll leeren", "Vaciar registro", "Vider le journal")
+row(
+    "common.undo_last_rename",
+    "Undo last rename",
+    "Letzte Umbenennung rückgängig",
+    "Deshacer último renombrado",
+    "Annuler le dernier renommage",
+)
+row(
+    "common.undo_last_move",
+    "Undo last move",
+    "Letzte Verschiebung rückgängig",
+    "Deshacer último movimiento",
+    "Annuler le dernier déplacement",
+)
+row(
+    "common.undo_header",
+    "Undo last disk action",
+    "Letzte Festplatten-Aktion rückgängig",
+    "Deshacer última acción en disco",
+    "Annuler la dernière action disque",
+)
 row("common.csv_file", "CSV file", "CSV-Datei", "Archivo CSV", "Fichier CSV")
 row("common.search", "Search", "Suche", "Buscar", "Recherche")
 row(
@@ -432,7 +481,48 @@ row(
 row("t4.refresh_preview", "Refresh preview", "Vorschau aktualisieren", "Actualizar vista previa", "Actualiser l’aperçu")
 
 # Tab 5 — schema-based file names (resolution via ffprobe); long intro lives in docs/tab5_explanation.md
-row("t5.title_max", "Title max length", "Titel max. Länge", "Título máx.", "Titre max.")
+row(
+    "t5.title_max",
+    "Title max (characters; 0 = full length).",
+    "Titel max. (Zeichen; 0 = volle Länge).",
+    "Título máx. (caracteres; 0 = longitud completa).",
+    "Titre max. (caractères ; 0 = longueur entière).",
+)
+row(
+    "t5.preserve_tags_on_shorten",
+    "Protect tags",
+    "Tags schonen",
+    "Proteger etiquetas",
+    "Protéger les tags",
+)
+row(
+    "t5.preserve_tags_hint",
+    "Off: drop tags & shorten the title. On: keep and edit […] tag blocks.",
+    "Aus: Tags löschen & Titel kürzen. An: Tags bearbeiten.",
+    "Desactivado: quitar etiquetas y acortar título. Activado: conservar y editar bloques […].",
+    "Désactivé : supprimer les tags et raccourcir le titre. Activé : conserver et éditer les blocs […].",
+)
+row(
+    "t5.from_csv_label",
+    "From CSV / file into the name (when “Add tags” is off)",
+    "Aus CSV / Datei in den Namen (wenn „Tags dranhängen“ aus ist)",
+    "Desde CSV / archivo en el nombre (con «Añadir etiquetas» desactivado)",
+    "Depuis le CSV / fichier dans le nom (si « Ajouter des tags » est désactivé)",
+)
+row(
+    "t5.append_tags_only",
+    "Add tags",
+    "Tags dranhängen",
+    "Añadir etiquetas",
+    "Ajouter des tags",
+)
+row(
+    "t5.append_tags_hint_short",
+    "On: If tags below are checked, they are added. Off: If tags below are checked, they replace the old ones.",
+    "An: Wenn unten Tags aktiviert sind, werden sie angehängt. Aus: Wenn unten Tags aktiviert sind, ersetzen sie die alten.",
+    "Activado: si marcas etiquetas abajo, se añaden. Desactivado: si marcas etiquetas abajo, sustituyen a las anteriores.",
+    "Activé : si des cases en bas sont cochées, les tags s’ajoutent. Désactivé : si des cases en bas sont cochées, ils remplacent les anciens.",
+)
 row(
     "t5.include_year",
     "Year (YYYY) from CSV or file (creation if available)",
@@ -471,13 +561,6 @@ row(
     "Neue Dateinamen füllen",
     "Rellenar nombres nuevos",
     "Remplir les nouveaux noms",
-)
-row(
-    "t5.tags_only_mode",
-    "only add tags",
-    "Nur Tags hinzufügen",
-    "solo añadir etiquetas",
-    "ajouter seulement des tags",
 )
 row(
     "t5.selected_only",
@@ -893,6 +976,27 @@ row(
     "Tab 5 Umbenennen: fertig (dry_run={dry}). Umbenannt: {renamed}, übersprungen: {skipped}.\n",
     "Tab 5 renombrar: hecho (dry_run={dry}). Renombrados: {renamed}, omitidos: {skipped}.\n",
     "Tab 5 renommage : terminé (dry_run={dry}). Renommés : {renamed}, ignorés : {skipped}.\n",
+)
+row(
+    "log.undo_rename_nothing",
+    "Nothing to undo — run a real disk rename or move (preview off) first.\n",
+    "Nichts rückgängig zu machen — zuerst echtes Umbenennen oder Verschieben (Vorschau aus).\n",
+    "Nada que deshacer — ejecute antes un renombrado o movimiento real (sin vista previa).\n",
+    "Rien à annuler — lancez d’abord un renommage ou un déplacement réel (sans aperçu).\n",
+)
+row(
+    "log.undo_rename_done",
+    "Undo: reverted {n} path(s) on disk.\n",
+    "Rückgängig: {n} Pfad/Pfade auf der Festplatte zurückgesetzt.\n",
+    "Deshacer: {n} ruta(s) revertida(s) en el disco.\n",
+    "Annulation : {n} chemin(s) restauré(s) sur le disque.\n",
+)
+row(
+    "log.undo_rename_done_preview",
+    "Undo preview: {n} step(s) logged (disk unchanged — turn off preview and undo again to apply).\n",
+    "Rückgängig-Vorschau: {n} Schritt(e) im Log (Festplatte unverändert — Vorschau aus, erneut rückgängig zum Anwenden).\n",
+    "Vista previa de deshacer: {n} paso(s) en el registro (disco sin cambios — desactive la vista previa y repita).\n",
+    "Aperçu d’annulation : {n} étape(s) dans le journal (disque inchangé — désactivez l’aperçu puis réessayez).\n",
 )
 row(
     "log.t5_preset_save_fail",
