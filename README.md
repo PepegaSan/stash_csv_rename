@@ -43,6 +43,8 @@ Longer reference text (formerly shown in the app) lives in **[docs/tab5_explanat
 Tab 5 is for **batch-generating leaf file names** from Stash/CSV fields so **metadata lives in the name**, not only in Stash:
 
 - **Base:** scene **title**, truncated to a max length (default 15); if the title is empty, the current **file name** is used — **not** Stash tags or markers as the main stem.
+- **Protect tags** (checkbox): off — shortening can hit the whole stem including `[…]`; on — only the title before `[…]` is shortened, bracket blocks stay for you to work with.
+- **Add tags** (checkbox; DE *Tags dranhängen*): off — name is rebuilt from CSV options; checked slots below **replace** old bracket tags when those slots are used. On — checked slots below are **added** to the current name when used (see the hint under the checkbox).
 - **Year:** optional, from CSV when available, otherwise from file timestamps (creation where supported, else modification).
 - **Up to five optional `[…]` slots:** map to scene tag names or fixed text you choose (checkboxes + text per slot).
 - **Resolution:** optional via **ffprobe** on the file (e.g. height-based `1080p`); requires `ffprobe` in `PATH`.
@@ -50,7 +52,7 @@ Tab 5 is for **batch-generating leaf file names** from Stash/CSV fields so **met
 
 Workflow: load the same CSV as on Tab 3 (re-export with **`export_stash_files.ps1`** / Tab 1 if you need the extra columns), filter items, tune the schema, **Fill “new file name” from schema**, then **Rename** like Tab 3. **Presets** (your patterns) are stored in **`schema_rename_presets.json`** next to the app — that file is **local only** and listed in `.gitignore` so nothing personal is published.
 
-For already-renamed files: enable **`only add tags`** to append checked tag slots to the current name (keep title/year as-is).  
+For already-renamed files: enable **Add tags** (*Tags dranhängen*) so checked tag slots below are added to the current name (see the short hint under that checkbox).  
 Per-row manual fix: right-click in Tab 5 and use **Edit scene title (selected)**.
 
 `scene_tags` and `scene_markers` remain in the CSV for the table and search (`tags:` / `markers:` filters on Tab 3–5).
@@ -67,6 +69,8 @@ The GUI supports **English, German, Spanish, and French**. Choose the language u
 
 ## Recent changes (high level)
 
+- **Tab 5** copy and layout: short labels **Protect tags** / **Add tags**, conditional hint text under **Add tags**, and the protect-tags hint on the same block as **Title max.** Locales live in `mklocales.py` → `python mklocales.py`.
+- **Light mode:** checkbox and radio colors in `themes/blue_soft.json` are easier to see when checked.
 - **Tab 5** schema rename: title/year/slots/resolution/rating → **new file name** column; presets in local JSON.
 - **UI refresh:** cleaner/slimmer layout (less clutter), ffprobe placement improved, and softer blue accents in light/dark mode.
 - **Tab 3 / Tab 4 / Tab 5:** search field plus **exclude** filter for the item list.
