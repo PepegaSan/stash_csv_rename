@@ -1,26 +1,40 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec: single-file Windows GUI (CustomTkinter + bundled locales/themes/PS1).
+"""
+PyInstaller one-file, windowed (no console) bundle for Stashmarker.
+
+Run from repository root, e.g.:
+  python -m PyInstaller --noconfirm packaging/stashmarker_onefile.spec
+
+Paths use SPECPATH (directory containing this spec) so datas resolve to ../locales, ../themes, etc.
+"""
+
+import os
 
 from PyInstaller.utils.hooks import collect_all
+
+# PyInstaller injects SPECPATH = absolute path of the folder that contains this .spec file.
+_spec_dir = os.path.abspath(SPECPATH)
+_root = os.path.normpath(os.path.join(_spec_dir, ".."))
 
 block_cipher = None
 
 datas = [
-    ("locales", "locales"),
-    ("themes", "themes"),
-    ("export_stash_files.ps1", "."),
+    (os.path.join(_root, "locales"), "locales"),
+    (os.path.join(_root, "themes"), "themes"),
+    (os.path.join(_root, "export_stash_files.ps1"), "."),
 ]
 binaries = []
-hiddenimports = ["i18n", "file_rename_tools"]
+hiddenimports = ["i18n", "file_rename_tools", "theme_palette"]
 
+# CustomTkinter: Python code + bundled images / themes / Tcl bits used by the widgets.
 tmp_ret = collect_all("customtkinter")
 datas += tmp_ret[0]
 binaries += tmp_ret[1]
 hiddenimports += tmp_ret[2]
 
 a = Analysis(
-    ["gui_file_tools.py"],
-    pathex=[],
+    [os.path.join(_root, "gui_file_tools.py")],
+    pathex=[_root],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

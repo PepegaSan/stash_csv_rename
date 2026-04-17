@@ -2,11 +2,11 @@
 setlocal
 cd /d "%~dp0"
 
-title Stashmarker — build Windows .exe
+title Stashmarker — build one-file Windows .exe
 
-echo Build Stashmarker.exe (PyInstaller, one-file GUI)
-echo Repository: %~dp0
-echo Tip: use a fresh venv if your global Python has extra packages — that keeps the .exe smaller.
+echo Build Stashmarker.exe (PyInstaller, one-file, no console window)
+echo Spec: "%~dp0packaging\stashmarker_onefile.spec"
+echo Output: "%~dp0dist\Stashmarker.exe"
 echo.
 
 python --version >nul 2>&1
@@ -27,14 +27,13 @@ python -m pip install -r "%~dp0requirements-build.txt"
 if errorlevel 1 goto :fail
 
 echo.
-echo Running PyInstaller (stashmarker.spec^)...
-python -m PyInstaller --noconfirm --clean "%~dp0stashmarker.spec"
+echo Running PyInstaller (one-file, windowed^)...
+python -m PyInstaller --noconfirm --clean "%~dp0packaging\stashmarker_onefile.spec"
 if errorlevel 1 goto :fail
 
 echo.
 echo DONE.
-echo Output: "%~dp0dist\Stashmarker.exe"
-echo You can copy that file anywhere; settings and CSVs are created next to the .exe.
+echo You can copy "dist\Stashmarker.exe" anywhere; settings and CSVs are created next to the .exe.
 echo.
 pause
 exit /b 0

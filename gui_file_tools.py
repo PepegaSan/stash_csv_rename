@@ -7,12 +7,15 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from tkinter import Menu, TclError, filedialog, simpledialog, ttk
 
 import customtkinter as ctk
 
 from i18n import SUPPORTED_LANGS, Translator
+
+from theme_palette import PALETTE_DARK, PALETTE_LIGHT
 
 from file_rename_tools import (
     append_schema_tags_to_leaf,
@@ -24,6 +27,7 @@ from file_rename_tools import (
     build_schema_rename_leaf,
     compose_ui_list_filter,
     merge_extra_bracket_tags_into_leaf,
+    ffprobe_paths_parallel,
     ffprobe_video_size,
     filter_stub_for_subfolder_suggest,
     find_ffprobe_executable,
@@ -84,41 +88,29 @@ _TK_CONTROL_MASK = 0x0004
 # Large Treeview fills: insert in chunks so the UI stays responsive with thousands of rows.
 _TTK_TREE_INSERT_BATCH = 350
 
-# Secondary / hint labels: (light appearance, dark appearance). CTk scroll areas use gray in light mode — avoid
-# theme grays like gray25/gray70 here or text disappears on the frame background.
-_LABEL_HINT = ("#1a1a1a", "#d0d0d0")
-# Scroll areas + labels: CTk "transparent" often paints wrong on scroll canvas in light mode (dark slabs).
-_UI_SURFACE = ("gray95", "gray17")
-# CTkEntry hint text: default theme color is often too close to typed text / background.
-_ENTRY_PLACEHOLDER_TEXT_COLOR = ("#6a6a6a", "#a3a3a3")
+# Deepfake-style chrome (see theme_palette.py).
+BTN_RADIUS = 10
+FONT_BTN = ("Segoe UI Black", 10)
+FONT_APP_TITLE = ("Segoe UI Black", 18)
+FONT_BTN_NAV = ("Segoe UI Semibold", 10)
+FONT_UI = ("Segoe UI", 14)
+FONT_UI_SM = ("Segoe UI", 12)
+FONT_SECTION = ("Segoe UI Semibold", 15)
+FONT_HINT = ("Segoe UI", 11)
 
-_CTK_SOFT_THEME_JSON = _RES_DIR / "themes" / "blue_soft.json"
-
+BTN_HEIGHT_COMPACT = 36
 
 def _load_customtkinter_theme() -> None:
-    """Softer blue accent in light and dark mode (themes/blue_soft.json)."""
-    if _CTK_SOFT_THEME_JSON.is_file():
-        ctk.set_default_color_theme(str(_CTK_SOFT_THEME_JSON.resolve()))
-    else:
-        ctk.set_default_color_theme("blue")
+    ctk.set_default_color_theme("blue")
 
 
-# Primary action buttons — same soft accent for both light and dark.
-_BTN_ACCENT = ("#6C88A0", "#6C88A0")
-_BTN_ACCENT_HOVER = ("#5C778E", "#5C778E")
+# Row / toolbar buttons — same height as Deepfake_smoother browse / actions.
+_BTN_H = BTN_HEIGHT_COMPACT
 
-# Tab 5 — highlight “selected rows only” control.
-_T5_SEL_BOX_BG = ("#e4ecf5", "#283040")
-_T5_SEL_BOX_BORDER = _BTN_ACCENT
-
-def _label(master, **kwargs):
-    """CTkLabel with same surface as scroll content (not transparent — avoids dark blocks in light mode)."""
-    kwargs.setdefault("fg_color", _UI_SURFACE)
-    return ctk.CTkLabel(master, **kwargs)
-
-
-# Compact buttons: width from label length (CTk default width is oversized for short text).
-_BTN_H = 28
+# After last keystroke in list filters, wait before rebuilding large treeviews (smoother typing).
+_FILTER_TYPING_DEBOUNCE_MS = 520
+# Tab 5: tag slot / title max text — debounced tree refresh (separate from list filters).
+_T5_SCHEMA_TYPING_DEBOUNCE_MS = 360
 
 def _btn_w(s: str, *, lo: int = 40, hi: int = 420) -> int:
     return max(lo, min(hi, int(len(s) * 6.8 + 22)))
@@ -133,11 +125,12 @@ def _default_file_tools_csv_dir() -> Path:
 class FileToolsApp(ctk.CTk):
     def __init__(self) -> None:
         _load_customtkinter_theme()
-        super().__init__(fg_color=_UI_SURFACE)
+        super().__init__(fg_color=PALETTE_DARK["bg"])
+        self._pal: dict[str, str] = dict(PALETTE_DARK)
         self.title("Stashmarker — file list & rename")
-        self.geometry("960x900")
-        self.minsize(640, 520)
-        ctk.set_appearance_mode("dark")
+        self.geometry("1180x960")
+        self.minsize(920, 640)
+        self._nav_key = "t1"
 
         self._rows: list[dict[str, str]] = []
         self._last_shared_csv = ""
@@ -182,6 +175,7 @@ class FileToolsApp(ctk.CTk):
         self._t3_fold_src = ctk.StringVar(value="")
         self._t3_fold_new = ctk.StringVar(value="")
         self._t3_fold_confirm = ctk.BooleanVar(value=False)
+        self._t3_filter_after_id: str | None = None
 
         # Tab 4
         self._t4_rows: list[dict[str, str]] = []
@@ -199,6 +193,7 @@ class FileToolsApp(ctk.CTk):
         self._t4_use_selected = ctk.BooleanVar(value=False)
         self._t4_preview_scheduled = False
         self._t4_after_id: str | None = None
+        self._t4_filter_ui_after_id: str | None = None
         self._t4_trace_ids: list[tuple[ctk.Variable, str]] = []
         self._t5_trace_ids: list[tuple[ctk.Variable, str]] = []
         self._tree_b1_drag_state: dict[int, dict[str, object]] = {}
@@ -228,6 +223,7 @@ class FileToolsApp(ctk.CTk):
         self._t5_preset_name = ctk.StringVar(value="")
         self._t5_preset_pick = ctk.StringVar(value="\u2014")  # same as t5.preset_none in all locales
         self._t5_ffprobe_cache: dict[str, tuple[int | None, int | None]] = {}
+        self._t5_probe_busy = False
         self._t5_preset_menu: ctk.CTkOptionMenu | None = None
         self._t5_rebuild_after_id: str | None = None
         self._rename_undo_stack: tuple[str, list[tuple[int, str, str, str]]] | None = None
@@ -243,11 +239,18 @@ class FileToolsApp(ctk.CTk):
         self._ui_language = ctk.StringVar(value="en")
         self._settings_dialog: ctk.CTkToplevel | None = None
         self._work_status = ctk.StringVar(value="")
+        self._t1_export_busy = False
+        self._t2_scan_busy = False
+        self._btn_t1_export: ctk.CTkButton | None = None
+        self._btn_t2_scan: ctk.CTkButton | None = None
+        self._btn_t5_probe: ctk.CTkButton | None = None
 
         self._load_settings()
+        self._sync_palette_from_appearance()
         self._translator = Translator(_RES_DIR / "locales", self._norm_lang_code(self._ui_language.get()))
         self.title(self._tr("app.window_title"))
         self._build_ui()
+        self.configure(fg_color=self._pal["bg"])
         self._apply_user_appearance_setting()
         self._apply_ttk_treeview_style()
         self._install_t4_traces()
@@ -349,7 +352,14 @@ class FileToolsApp(ctk.CTk):
 
     def _install_t4_traces(self) -> None:
         self._remove_t4_traces()
-        cb = lambda *_: (self._t4_rebuild_tree(), self._t4_schedule_preview_refresh())
+
+        def cb_filter_typing(*_a: object) -> None:
+            self._t4_schedule_filter_ui_update()
+
+        def cb_immediate(*_a: object) -> None:
+            self._t4_rebuild_tree()
+            self._t4_schedule_preview_refresh()
+
         for v in (
             self._t4_filter,
             self._t4_filter_exclude,
@@ -357,13 +367,16 @@ class FileToolsApp(ctk.CTk):
             self._t4_filter_combine,
             self._t4_filter_exclude_field,
             self._t4_filter_exclude_combine,
+        ):
+            self._t4_trace_ids.append((v, v.trace_add("write", cb_filter_typing)))
+        for v in (
             self._t4_target_folder,
             self._t4_subfolder,
             self._t4_per_source,
             self._t4_use_selected,
             self._t4_dry,
         ):
-            self._t4_trace_ids.append((v, v.trace_add("write", cb)))
+            self._t4_trace_ids.append((v, v.trace_add("write", cb_immediate)))
 
     def _t5_shorten_scope_effective(self) -> str:
         """``title_only`` = shorten head before trailing ``[…]``; ``full_stem`` = cap whole stem."""
@@ -392,10 +405,11 @@ class FileToolsApp(ctk.CTk):
                 pass
             self._t5_rebuild_after_id = None
 
-    def _t5_schedule_rebuild_tree(self) -> None:
-        """Debounce full tree rebuild — tag text traces fire on every keystroke."""
+    def _t5_schedule_rebuild_tree(self, *, delay_ms: int | None = None) -> None:
+        """Debounce full tree rebuild — tag text / title traces fire on every keystroke."""
         self._cancel_t5_tree_rebuild_after()
-        self._t5_rebuild_after_id = self.after(280, self._t5_run_scheduled_tree_rebuild)
+        ms = _T5_SCHEMA_TYPING_DEBOUNCE_MS if delay_ms is None else delay_ms
+        self._t5_rebuild_after_id = self.after(ms, self._t5_run_scheduled_tree_rebuild)
 
     def _t5_run_scheduled_tree_rebuild(self) -> None:
         self._t5_rebuild_after_id = None
@@ -414,7 +428,7 @@ class FileToolsApp(ctk.CTk):
     def _install_t5_traces(self) -> None:
         """Refresh Tab 5 preview when schema options (tags, title length, …) change."""
         self._remove_t5_traces()
-        cb_filter = lambda *_: self._t5_rebuild_tree()
+        cb_filter = lambda *_: self._t5_schedule_rebuild_tree(delay_ms=_FILTER_TYPING_DEBOUNCE_MS)
         cb_schema_leaf = lambda *_: self._t5_on_schema_preview_change()
         cb_tag_text = lambda *_: self._t5_schedule_rebuild_tree()
         for i in range(5):
@@ -446,6 +460,43 @@ class FileToolsApp(ctk.CTk):
         ):
             self._t5_trace_ids.append((v, v.trace_add("write", cb_schema_leaf)))
 
+    def _cancel_t3_filter_rebuild_after(self) -> None:
+        aid = self._t3_filter_after_id
+        if aid is not None:
+            try:
+                self.after_cancel(aid)
+            except (TclError, ValueError):
+                pass
+            self._t3_filter_after_id = None
+
+    def _schedule_t3_filter_rebuild(self) -> None:
+        """Debounce Tab 3 tree while typing in search / exclude filters."""
+        self._cancel_t3_filter_rebuild_after()
+        self._t3_filter_after_id = self.after(_FILTER_TYPING_DEBOUNCE_MS, self._t3_run_scheduled_filter_rebuild)
+
+    def _t3_run_scheduled_filter_rebuild(self) -> None:
+        self._t3_filter_after_id = None
+        self._t3_rebuild_tree()
+
+    def _cancel_t4_filter_ui_after(self) -> None:
+        aid = self._t4_filter_ui_after_id
+        if aid is not None:
+            try:
+                self.after_cancel(aid)
+            except (TclError, ValueError):
+                pass
+            self._t4_filter_ui_after_id = None
+
+    def _t4_schedule_filter_ui_update(self) -> None:
+        """Debounce Tab 4 tree + move preview while typing filters or paths."""
+        self._cancel_t4_filter_ui_after()
+        self._t4_filter_ui_after_id = self.after(_FILTER_TYPING_DEBOUNCE_MS, self._t4_run_scheduled_filter_ui_update)
+
+    def _t4_run_scheduled_filter_ui_update(self) -> None:
+        self._t4_filter_ui_after_id = None
+        self._t4_rebuild_tree()
+        self._t4_schedule_preview_refresh()
+
     def _cancel_t4_preview_after(self) -> None:
         self._t4_preview_scheduled = False
         aid = self._t4_after_id
@@ -457,6 +508,9 @@ class FileToolsApp(ctk.CTk):
             self._t4_after_id = None
 
     def _rebuild_main_ui(self) -> None:
+        self._sync_palette_from_appearance()
+        self._cancel_t3_filter_rebuild_after()
+        self._cancel_t4_filter_ui_after()
         self._remove_t4_traces()
         self._remove_t5_traces()
         self._cancel_t4_preview_after()
@@ -474,6 +528,7 @@ class FileToolsApp(ctk.CTk):
         self._translator.set_lang(self._norm_lang_code(self._ui_language.get()))
         self.title(self._tr("app.window_title"))
         self._build_ui()
+        self.configure(fg_color=self._pal["bg"])
         self._apply_user_appearance_setting()
         self._apply_ttk_treeview_style()
         self._install_t4_traces()
@@ -489,6 +544,164 @@ class FileToolsApp(ctk.CTk):
         if m not in ("dark", "light", "system"):
             m = "dark"
         ctk.set_appearance_mode(m)
+
+    def _sync_palette_from_appearance(self) -> None:
+        """Custom chrome palette: light only when appearance is Light; dark chrome for Dark and System."""
+        m = (self._appearance_mode.get() or "dark").strip().lower()
+        self._pal = dict(PALETTE_LIGHT if m == "light" else PALETTE_DARK)
+
+    def _entry_kw(self) -> dict:
+        p = self._pal
+        return dict(
+            height=36,
+            corner_radius=8,
+            border_width=1,
+            fg_color=p["panel_elev"],
+            border_color=p["border"],
+            text_color=p["text"],
+            font=FONT_UI,
+            placeholder_text_color=p["muted"],
+        )
+
+    def _option_kw(self) -> dict:
+        p = self._pal
+        return dict(
+            height=34,
+            corner_radius=8,
+            fg_color=p["panel_elev"],
+            button_color=p["cyan_dim"],
+            button_hover_color=p["cyan"],
+            font=FONT_UI_SM,
+            text_color=p["text"],
+            dropdown_fg_color=p["panel"],
+            dropdown_hover_color=p["panel_elev"],
+            dropdown_text_color=p["text"],
+        )
+
+    def _button_kw(self, variant: str = "ghost", *, height: int = 40, font: tuple | None = None, width: int | None = None) -> dict:
+        font = font or FONT_BTN
+        p = self._pal
+        kw: dict = dict(
+            corner_radius=BTN_RADIUS,
+            font=font,
+            height=height,
+            border_width=2,
+            border_color=p["btn_rim"],
+        )
+        if width is not None:
+            kw["width"] = width
+        if variant == "ghost":
+            kw.update(
+                fg_color=p["panel_elev"],
+                hover_color=p["border"],
+                text_color=p["text"],
+            )
+        elif variant == "primary":
+            kw.update(
+                fg_color=p["cyan_dim"],
+                hover_color=p["cyan"],
+                text_color=p["text"],
+                border_color=p["primary_border"],
+            )
+        elif variant == "primary_emphasis":
+            kw.update(
+                fg_color=p["cyan_dim"],
+                hover_color=p["cyan"],
+                text_color=p["text"],
+                border_color=p["primary_border"],
+                font=("Segoe UI Black", 11),
+            )
+        elif variant == "success":
+            kw.update(
+                fg_color="#1b5e20",
+                hover_color="#2e7d32",
+                text_color="#f0f0f8",
+                border_color="#041208",
+            )
+        elif variant == "gold":
+            kw.update(
+                fg_color=p["gold_dim"],
+                hover_color=p["gold"],
+                text_color=p["text"],
+                border_color="#1f1804",
+            )
+        elif variant == "nav_idle":
+            kw.update(
+                fg_color=p["panel_elev"],
+                hover_color=p["border"],
+                text_color=p["muted"],
+                font=FONT_BTN_NAV,
+            )
+        elif variant == "nav_active":
+            kw.update(
+                fg_color=p["cyan_dim"],
+                hover_color=p["cyan"],
+                text_color=p["text"],
+                border_color=p["cyan"],
+                font=("Segoe UI Black", 10),
+            )
+        elif variant == "danger_soft":
+            kw.update(
+                fg_color="#8b1e1e",
+                hover_color="#5f1212",
+                text_color="#f0f0f8",
+                border_color="#140404",
+            )
+        return kw
+
+    def _gear_button_kw(self, *, variant: str = "ghost", height: int = 40) -> dict:
+        kw = self._button_kw(variant, height=height)
+        kw["width"] = 44
+        kw["font"] = ("Segoe UI Semibold", 20)
+        return kw
+
+    def _checkbox_kw(self, **extra: object) -> dict:
+        p = self._pal
+        d: dict = dict(
+            checkbox_width=22,
+            checkbox_height=22,
+            font=FONT_UI_SM,
+            text_color=p["text"],
+            fg_color=p["cyan_dim"],
+            hover_color=p["cyan"],
+            border_color=p["border"],
+        )
+        d.update(extra)
+        return d
+
+    def _radio_kw(self) -> dict:
+        p = self._pal
+        return dict(
+            font=FONT_UI_SM,
+            text_color=p["text"],
+            fg_color=p["cyan_dim"],
+            hover_color=p["cyan"],
+            border_color=p["border"],
+        )
+
+    def _label(self, master: ctk.CTkFrame | ctk.CTkScrollableFrame | ctk.CTkTabview | ctk.CTk | ctk.CTkToplevel, **kwargs) -> ctk.CTkLabel:
+        kwargs.setdefault("fg_color", self._pal["panel"])
+        kwargs.setdefault("text_color", self._pal["text"])
+        return ctk.CTkLabel(master, **kwargs)
+
+    def _nav_button(self, text: str, key: str) -> ctk.CTkButton:
+        btn = ctk.CTkButton(
+            self.frame_sidebar,
+            text=text,
+            anchor="w",
+            command=lambda k=key: self.select_panel(k),
+            **self._button_kw("nav_idle", height=44),
+        )
+        btn.pack(fill="x", padx=10, pady=5)
+        return btn
+
+    def select_panel(self, key: str) -> None:
+        self._nav_key = key
+        for k, fr in self.panels.items():
+            fr.grid_remove()
+        self.panels[key].grid(row=0, column=0, sticky="nsew")
+        for k, btn in self.nav_buttons.items():
+            btn.configure(**self._button_kw("nav_active" if k == key else "nav_idle", height=44))
 
     def _apply_ttk_treeview_style(self) -> None:
         """ttk.Treeview ignores CTk theme; match light vs dark so lists stay readable."""
@@ -565,27 +778,27 @@ class FileToolsApp(ctk.CTk):
         tree.bind("<Button-5>", on_linux_down)
 
     def _install_tree_drag_range_select(self, tree: ttk.Treeview) -> None:
-        """Click-drag to select a contiguous row block (Ctrl/Shift+click still use default extended mode)."""
+        """Click-drag to select a contiguous row block; drag past top/bottom edge auto-scrolls the list.
+
+        Ctrl/Shift+click keep the default Treeview extended selection behaviour.
+        """
         tid = id(tree)
+        edge = 22
+        repeat_ms = 55
 
-        def on_press(event: object) -> None:
-            y = getattr(event, "y", 0)
-            row_id = tree.identify_row(y)
-            self._tree_b1_drag_state[tid] = {"anchor": row_id or "", "down": True}
-
-        def on_motion(event: object) -> None:
+        def cancel_auto_scroll() -> None:
             st = self._tree_b1_drag_state.get(tid)
-            if not st or not st.get("down"):
+            if not st:
                 return
-            state = int(getattr(event, "state", 0))
-            if (state & _TK_CONTROL_MASK) or (state & _TK_SHIFT_MASK):
-                return
-            anchor = (st.get("anchor") or "").strip()
-            if not anchor:
-                return
-            y = getattr(event, "y", 0)
-            cur = tree.identify_row(y)
-            if not cur:
+            aid = st.pop("auto_scroll_id", None)
+            if aid is not None:
+                try:
+                    self.after_cancel(aid)
+                except (TclError, ValueError):
+                    pass
+
+        def apply_range(anchor: str, cur: str) -> None:
+            if not anchor or not cur:
                 return
             children = tree.get_children("")
             try:
@@ -601,7 +814,77 @@ class FileToolsApp(ctk.CTk):
             for x in block[1:]:
                 tree.selection_add(x)
 
+        def auto_tick() -> None:
+            st = self._tree_b1_drag_state.get(tid)
+            if not st or not st.get("down"):
+                cancel_auto_scroll()
+                return
+            st["auto_scroll_id"] = None
+            if not tree.get_children(""):
+                cancel_auto_scroll()
+                return
+            anchor = (st.get("anchor") or "").strip()
+            if not anchor:
+                return
+            state = int(st.get("last_state", 0))
+            if (state & _TK_CONTROL_MASK) or (state & _TK_SHIFT_MASK):
+                return
+            py = tree.winfo_pointery()
+            yh = max(tree.winfo_height(), edge * 2 + 4)
+            if py < edge:
+                tree.yview_scroll(-1, "units")
+            elif py > yh - edge:
+                tree.yview_scroll(1, "units")
+            cur = tree.identify_row(py)
+            if not cur:
+                cur = tree.identify_row(min(max(edge, py), yh - edge - 1))
+            if cur:
+                apply_range(anchor, cur)
+            if st.get("down") and anchor and (py < edge or py > yh - edge):
+                st["auto_scroll_id"] = self.after(repeat_ms, auto_tick)
+
+        def on_press(event: object) -> None:
+            cancel_auto_scroll()
+            y = getattr(event, "y", 0)
+            row_id = tree.identify_row(y)
+            self._tree_b1_drag_state[tid] = {
+                "anchor": row_id or "",
+                "down": True,
+                "last_state": int(getattr(event, "state", 0)),
+            }
+
+        def on_motion(event: object) -> None:
+            st = self._tree_b1_drag_state.get(tid)
+            if not st or not st.get("down"):
+                return
+            state = int(getattr(event, "state", 0))
+            st["last_state"] = state
+            if (state & _TK_CONTROL_MASK) or (state & _TK_SHIFT_MASK):
+                cancel_auto_scroll()
+                return
+            anchor = (st.get("anchor") or "").strip()
+            if not anchor:
+                return
+            y = getattr(event, "y", 0)
+            yh = max(tree.winfo_height(), edge * 2 + 4)
+            cur = tree.identify_row(y)
+            if not cur:
+                if y < edge:
+                    tree.yview_scroll(-1, "units")
+                    cur = tree.identify_row(edge)
+                elif y > yh - edge:
+                    tree.yview_scroll(1, "units")
+                    cur = tree.identify_row(yh - edge - 1)
+            if cur:
+                apply_range(anchor, cur)
+            if y < edge or y > yh - edge:
+                if not st.get("auto_scroll_id"):
+                    st["auto_scroll_id"] = self.after(repeat_ms, auto_tick)
+            else:
+                cancel_auto_scroll()
+
         def on_release(_event: object) -> None:
+            cancel_auto_scroll()
             st = self._tree_b1_drag_state.get(tid)
             if st:
                 st["down"] = False
@@ -812,88 +1095,180 @@ class FileToolsApp(ctk.CTk):
                 self._t5_rebuild_tree()
             self._save_settings()
 
+    def _on_save_gui_settings_click(self) -> None:
+        self._save_settings()
+        self._log(self._tr("settings.saved_log"))
+
     def _build_ui(self) -> None:
         self._browse_w = max(88, _btn_w(self._tr("common.browse")))
-        head = ctk.CTkFrame(self, fg_color=_UI_SURFACE)
-        head.pack(fill="x", padx=10, pady=(10, 0))
-        _label(head, text=self._tr("app.brand"), font=ctk.CTkFont(size=17, weight="bold")).pack(side="left")
-        _label(
-            head,
+        p = self._pal
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=2)
+        self.grid_rowconfigure(3, weight=1)
+
+        self.frame_top = ctk.CTkFrame(self, fg_color=p["panel"], corner_radius=0, height=56)
+        self.frame_top.grid(row=0, column=0, sticky="ew", padx=0, pady=0)
+        self.frame_top.grid_columnconfigure(1, weight=1)
+        self.frame_top.grid_propagate(False)
+
+        self.lbl_app_title = ctk.CTkLabel(
+            self.frame_top,
+            text=self._tr("app.brand"),
+            font=FONT_APP_TITLE,
+            text_color=p["text"],
+            fg_color="transparent",
+        )
+        self.lbl_app_title.grid(row=0, column=0, padx=(20, 12), pady=12, sticky="w")
+
+        self._work_status_lbl = ctk.CTkLabel(
+            self.frame_top,
             textvariable=self._work_status,
             anchor="w",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
-        ).pack(side="left", padx=(14, 8), fill="x", expand=True)
-        ctk.CTkButton(
-            head,
-            text="\u2699",
-            width=36,
-            height=32,
-            font=ctk.CTkFont(size=18),
-            command=self._open_settings_dialog,
-            fg_color=("gray78", "gray28"),
-            hover_color=("gray68", "gray38"),
-        ).pack(side="right")
+            font=FONT_UI,
+            text_color=p["muted"],
+            fg_color="transparent",
+        )
+        self._work_status_lbl.grid(row=0, column=1, sticky="ew", padx=8, pady=12)
+
         self._header_undo_btn = ctk.CTkButton(
-            head,
+            self.frame_top,
             text=self._tr("common.undo_header"),
-            width=max(118, _btn_w(self._tr("common.undo_header"))),
-            height=32,
-            font=ctk.CTkFont(size=13, weight="bold"),
             command=self._undo_last_disk_rename,
-            fg_color=_BTN_ACCENT,
-            hover_color=_BTN_ACCENT_HOVER,
+            width=max(118, _btn_w(self._tr("common.undo_header"))),
             state="disabled",
+            **self._button_kw("gold", height=40),
         )
-        self._header_undo_btn.pack(side="right", padx=(0, 10))
+        self._header_undo_btn.grid(row=0, column=2, padx=(8, 6), pady=8, sticky="e")
 
-        tabs = ctk.CTkTabview(self, fg_color=_UI_SURFACE)
-        tabs.pack(fill="both", expand=True, padx=10, pady=(6, 4))
-        tab1, tab2, tab3, tab4, tab5 = (
-            self._tr("tab.1"),
-            self._tr("tab.2"),
-            self._tr("tab.3"),
-            self._tr("tab.4"),
-            self._tr("tab.5"),
+        self.btn_settings = ctk.CTkButton(
+            self.frame_top,
+            text="\u2699",
+            command=self._open_settings_dialog,
+            **self._gear_button_kw(variant="primary_emphasis", height=_BTN_H),
         )
-        tabs.add(tab1)
-        tabs.add(tab2)
-        tabs.add(tab3)
-        tabs.add(tab4)
-        tabs.add(tab5)
+        self.btn_settings.grid(row=0, column=3, padx=(8, 20), pady=8, sticky="e")
 
-        def _scroll_wrap(tab_label: str) -> ctk.CTkScrollableFrame:
-            inner = ctk.CTkScrollableFrame(tabs.tab(tab_label), fg_color=_UI_SURFACE)
-            inner.pack(fill="both", expand=True)
-            return inner
+        self.frame_body = ctk.CTkFrame(self, fg_color=p["bg"])
+        self.frame_body.grid(row=1, column=0, sticky="nsew", padx=14, pady=(10, 6))
+        self.frame_body.grid_columnconfigure(1, weight=1)
+        self.frame_body.grid_rowconfigure(0, weight=1)
 
-        self._build_tab1(_scroll_wrap(tab1))
-        self._build_tab2(_scroll_wrap(tab2))
-        self._build_tab3(_scroll_wrap(tab3))
-        self._build_tab4(_scroll_wrap(tab4))
-        self._build_tab5(_scroll_wrap(tab5))
+        self.frame_sidebar = ctk.CTkFrame(
+            self.frame_body,
+            width=216,
+            fg_color=p["panel"],
+            corner_radius=14,
+            border_width=1,
+            border_color=p["border"],
+        )
+        self.frame_sidebar.grid(row=0, column=0, sticky="ns", padx=(0, 12), pady=0)
+        self.frame_sidebar.grid_propagate(False)
 
-        log_f = ctk.CTkFrame(self, fg_color=_UI_SURFACE)
-        log_f.pack(fill="both", expand=False, padx=10, pady=(4, 10))
-        log_top = ctk.CTkFrame(log_f, fg_color=_UI_SURFACE)
-        log_top.pack(fill="x")
-        _label(log_top, text=self._tr("common.log"), anchor="w").pack(side="left")
+        self.frame_content = ctk.CTkFrame(
+            self.frame_body,
+            fg_color=p["panel"],
+            corner_radius=14,
+            border_width=1,
+            border_color=p["border"],
+        )
+        self.frame_content.grid(row=0, column=1, sticky="nsew", padx=0, pady=0)
+        self.frame_content.grid_rowconfigure(0, weight=1)
+        self.frame_content.grid_columnconfigure(0, weight=1)
+
+        def _mk_scroll_panel() -> ctk.CTkScrollableFrame:
+            return ctk.CTkScrollableFrame(
+                self.frame_content,
+                fg_color=p["panel"],
+                corner_radius=0,
+                scrollbar_fg_color=p["panel_elev"],
+                scrollbar_button_color=p["border"],
+                scrollbar_button_hover_color=p["cyan_dim"],
+            )
+
+        self.panel_t1 = _mk_scroll_panel()
+        self.panel_t2 = _mk_scroll_panel()
+        self.panel_t3 = _mk_scroll_panel()
+        self.panel_t4 = _mk_scroll_panel()
+        self.panel_t5 = _mk_scroll_panel()
+        self.panels = {
+            "t1": self.panel_t1,
+            "t2": self.panel_t2,
+            "t3": self.panel_t3,
+            "t4": self.panel_t4,
+            "t5": self.panel_t5,
+        }
+        for pan in self.panels.values():
+            pan.grid_columnconfigure(0, weight=1)
+
+        self.nav_buttons = {}
+        for text, key in (
+            (self._tr("tab.1"), "t1"),
+            (self._tr("tab.2"), "t2"),
+            (self._tr("tab.3"), "t3"),
+            (self._tr("tab.4"), "t4"),
+            (self._tr("tab.5"), "t5"),
+        ):
+            self.nav_buttons[key] = self._nav_button(text, key)
+
+        self._build_tab1(self.panel_t1)
+        self._build_tab2(self.panel_t2)
+        self._build_tab3(self.panel_t3)
+        self._build_tab4(self.panel_t4)
+        self._build_tab5(self.panel_t5)
+
+        for fr in self.panels.values():
+            fr.grid(row=0, column=0, sticky="nsew")
+            fr.grid_remove()
+        self.select_panel(self._nav_key)
+
+        self.frame_bottom = ctk.CTkFrame(
+            self,
+            fg_color=p["panel"],
+            corner_radius=12,
+            border_width=1,
+            border_color=p["border"],
+        )
+        self.frame_bottom.grid(row=2, column=0, sticky="ew", padx=14, pady=(4, 6))
+        ctk.CTkButton(
+            self.frame_bottom,
+            text=f"\U0001f4be {self._tr('common.save')}",
+            command=self._on_save_gui_settings_click,
+            **self._button_kw("success", height=42),
+        ).pack(side="left", padx=12, pady=12)
+
+        log_f = ctk.CTkFrame(self, fg_color=p["bg"])
+        log_f.grid(row=3, column=0, sticky="nsew", padx=14, pady=(0, 12))
+        log_f.grid_rowconfigure(1, weight=1)
+        log_f.grid_columnconfigure(0, weight=1)
+        log_top = ctk.CTkFrame(log_f, fg_color=p["panel"], corner_radius=8, border_width=1, border_color=p["border"])
+        log_top.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        self._label(log_top, text=self._tr("common.log"), anchor="w", fg_color="transparent").pack(
+            side="left", padx=10, pady=6
+        )
         ctk.CTkButton(
             log_top,
             text=self._tr("common.save_log"),
             width=_btn_w(self._tr("common.save_log")),
-            height=_BTN_H,
             command=self._save_log_to_file,
-        ).pack(side="right", padx=(8, 0))
+            **self._button_kw("ghost", height=_BTN_H),
+        ).pack(side="right", padx=(8, 10), pady=6)
         ctk.CTkButton(
             log_top,
             text=self._tr("common.clear_log"),
             width=_btn_w(self._tr("common.clear_log")),
-            height=_BTN_H,
             command=self._clear_log,
-        ).pack(side="right")
-        self._log_box = ctk.CTkTextbox(log_f, height=200, activate_scrollbars=True)
-        self._log_box.pack(fill="both", expand=True)
+            **self._button_kw("ghost", height=_BTN_H),
+        ).pack(side="right", pady=6)
+        self._log_box = ctk.CTkTextbox(
+            log_f,
+            height=200,
+            activate_scrollbars=True,
+            font=("Consolas", 12),
+            fg_color=p["panel_elev"],
+            border_color=p["border"],
+            text_color=p["text"],
+        )
+        self._log_box.grid(row=1, column=0, sticky="nsew")
         self._log_box.configure(state="disabled")
         self._sync_header_undo_button()
 
@@ -917,7 +1292,7 @@ class FileToolsApp(ctk.CTk):
         """
         kw: dict = {
             "placeholder_text": placeholder,
-            "placeholder_text_color": _ENTRY_PLACEHOLDER_TEXT_COLOR,
+            "placeholder_text_color": self._pal["muted"],
             "height": height,
         }
         if width is not None:
@@ -954,20 +1329,22 @@ class FileToolsApp(ctk.CTk):
     ) -> ctk.CTkFrame:
         """Header toggles visibility of the returned frame (pack children into it)."""
         pad = self._pad()
-        outer = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        outer = ctk.CTkFrame(
+            parent,
+            fg_color=self._pal["panel_elev"],
+            corner_radius=12,
+            border_width=1,
+            border_color=self._pal["border"],
+        )
         outer.pack(fill="x", **pad)
         open_flag = [start_open]
         title_base = self._tr(title_key)
-        body = ctk.CTkFrame(outer, fg_color=_UI_SURFACE)
+        body = ctk.CTkFrame(outer, fg_color="transparent")
         hdr = ctk.CTkButton(
             outer,
             text="",
             anchor="w",
-            height=26,
-            corner_radius=6,
-            fg_color=("gray82", "gray28"),
-            hover_color=("gray72", "gray38"),
-            font=ctk.CTkFont(size=12),
+            **self._button_kw("ghost", height=28, font=FONT_UI_SM),
         )
 
         def toggle() -> None:
@@ -989,36 +1366,36 @@ class FileToolsApp(ctk.CTk):
 
     def _build_tab1(self, parent: ctk.CTkFrame) -> None:
         pad = self._pad()
-        _label(
+        self._label(
             parent,
             text=self._tr("t1.intro"),
             anchor="w",
             wraplength=860,
             justify="left",
         ).pack(fill="x", **pad)
-        _label(
+        self._label(
             parent,
             text=self._tr("t1.hint_scan"),
             anchor="w",
             wraplength=860,
             justify="left",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         ).pack(fill="x", padx=10, pady=(0, 4))
-        _label(
+        self._label(
             parent,
             text=self._tr("t1.hint_connection_in_settings"),
             anchor="w",
             wraplength=860,
             justify="left",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         ).pack(fill="x", padx=10, pady=(0, 6))
 
-        csv_row = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
+        csv_row = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=32)
         csv_row.pack(fill="x", padx=10, pady=(2, 4))
         csv_row.pack_propagate(False)
-        _label(csv_row, text=self._tr("t1.label.save_csv"), width=160, anchor="w").pack(side="left")
+        self._label(csv_row, text=self._tr("t1.label.save_csv"), width=160, anchor="w").pack(side="left")
         ctk.CTkEntry(csv_row, textvariable=self._t1_out, height=28).pack(
             side="left", fill="x", expand=True, padx=(0, 8)
         )
@@ -1026,14 +1403,14 @@ class FileToolsApp(ctk.CTk):
             csv_row,
             text=self._tr("common.browse"),
             width=self._browse_w,
-            height=_BTN_H,
             command=self._browse_t1_out,
+            **self._button_kw("ghost", height=_BTN_H),
         ).pack(side="right")
 
-        row_batch = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
+        row_batch = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=32)
         row_batch.pack(fill="x", padx=10, pady=(0, 4))
         row_batch.pack_propagate(False)
-        _label(row_batch, text=self._tr("t1.batch_size"), width=160, anchor="w").pack(side="left")
+        self._label(row_batch, text=self._tr("t1.batch_size"), width=160, anchor="w").pack(side="left")
         ctk.CTkEntry(row_batch, textvariable=self._t1_per_page, width=80, height=28).pack(side="left")
 
         filt_body = self._collapsible_section(parent, title_key="t1.filters_title", start_open=False)
@@ -1043,87 +1420,86 @@ class FileToolsApp(ctk.CTk):
             ("t1.name_contains", self._t1_name_contains),
             ("t1.name_regex", self._t1_name_regex),
         ):
-            rr = ctk.CTkFrame(filt_body, fg_color=_UI_SURFACE, height=30)
+            rr = ctk.CTkFrame(filt_body, fg_color=self._pal["panel"], height=30)
             rr.pack(fill="x", pady=(0, 4))
             rr.pack_propagate(False)
-            _label(rr, text=self._tr(key), width=200, anchor="w").pack(side="left")
+            self._label(rr, text=self._tr(key), width=200, anchor="w").pack(side="left")
             ctk.CTkEntry(rr, textvariable=var, height=28).pack(side="left", fill="x", expand=True)
 
-        _label(
+        self._label(
             parent,
             text=self._tr("t1.section_export_actions"),
             anchor="w",
-            font=ctk.CTkFont(size=13, weight="bold"),
-            fg_color=_UI_SURFACE,
+            font=FONT_SECTION,
+            fg_color=self._pal["panel"],
         ).pack(fill="x", padx=10, pady=(6, 4))
 
-        bf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=34)
+        bf = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=34)
         bf.pack(fill="x", padx=10, pady=(0, 6))
         bf.pack_propagate(False)
-        ctk.CTkButton(
+        self._btn_t1_export = ctk.CTkButton(
             bf,
             text=self._tr("t1.run_export"),
             width=_btn_w(self._tr("t1.run_export")),
-            height=_BTN_H,
-            fg_color=_BTN_ACCENT,
-            hover_color=_BTN_ACCENT_HOVER,
             command=self._run_t1_export,
-        ).pack(side="left", padx=(0, 8))
+            **self._button_kw("primary_emphasis", height=_BTN_H),
+        )
+        self._btn_t1_export.pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             bf,
             text=self._tr("t1.open_out_folder"),
             width=_btn_w(self._tr("t1.open_out_folder")),
-            height=_BTN_H,
             command=self._open_t1_out_dir,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             bf,
             text=self._tr("t1.test_connection"),
             width=_btn_w(self._tr("t1.test_connection")),
-            height=_BTN_H,
             command=self._test_stash_connection,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             bf,
             text=self._tr("t1.check_csv_export"),
             width=_btn_w(self._tr("t1.check_csv_export")),
-            height=_BTN_H,
             command=self._probe_stash_csv_export,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left")
 
-        push_hdr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        push_hdr = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
         push_hdr.pack(fill="x", padx=10, pady=(4, 2))
-        _label(push_hdr, text=self._tr("t1.send_csv_to"), anchor="w", text_color=_LABEL_HINT, fg_color=_UI_SURFACE).pack(
+        self._label(push_hdr, text=self._tr("t1.send_csv_to"), anchor="w", text_color=self._pal["muted"], fg_color=self._pal["panel"]).pack(
             side="left"
         )
-        push = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=34)
+        push = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=34)
         push.pack(fill="x", padx=10, pady=(0, 6))
         push.pack_propagate(False)
         ctk.CTkButton(
             push,
             text=self._tr("t1.tab3_rename"),
             width=_btn_w(self._tr("t1.tab3_rename")),
-            height=_BTN_H,
             command=self._t1_push_to_tab3,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             push,
             text=self._tr("t1.tab4_move"),
             width=_btn_w(self._tr("t1.tab4_move")),
-            height=_BTN_H,
             command=self._t1_push_to_tab4,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             push,
             text=self._tr("t1.tab5_schema"),
             width=_btn_w(self._tr("t1.tab5_schema")),
-            height=_BTN_H,
             command=self._t1_push_to_tab5,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left")
 
     def _build_tab2(self, parent: ctk.CTkFrame) -> None:
         pad = self._pad()
-        _label(
+        self._label(
             parent,
             text=self._tr("t2.intro"),
             anchor="w",
@@ -1131,63 +1507,68 @@ class FileToolsApp(ctk.CTk):
             justify="left",
         ).pack(fill="x", **pad)
 
-        r = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        r = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
         r.pack(fill="x", **pad)
-        _label(r, text=self._tr("t2.folder_scan"), width=160, anchor="w").pack(side="left")
+        self._label(r, text=self._tr("t2.folder_scan"), width=160, anchor="w").pack(side="left")
         ctk.CTkEntry(r, textvariable=self._t2_folder).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
-            r, text=self._tr("common.browse"), width=self._browse_w, height=_BTN_H, command=self._browse_t2_folder
+            r, text=self._tr("common.browse"), width=self._browse_w, command=self._browse_t2_folder,
+            **self._button_kw("ghost", height=_BTN_H),
         ).pack(side="right")
 
-        ctk.CTkCheckBox(parent, text=self._tr("t2.recursive"), variable=self._t2_recursive).pack(anchor="w", **pad)
+        ctk.CTkCheckBox(
+            parent, text=self._tr("t2.recursive"), variable=self._t2_recursive, **self._checkbox_kw()
+        ).pack(anchor="w", **pad)
 
-        rr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        rr = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
         rr.pack(fill="x", **pad)
-        _label(rr, text=self._tr("t2.file_types"), width=160, anchor="w").pack(side="left")
+        self._label(rr, text=self._tr("t2.file_types"), width=160, anchor="w").pack(side="left")
         self._ph_string_entry(
             rr,
             self._t2_patterns,
             placeholder=self._tr("t2.patterns_placeholder"),
         ).pack(side="left", fill="x", expand=True)
 
-        ro = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        ro = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
         ro.pack(fill="x", **pad)
-        _label(ro, text=self._tr("t2.save_list_csv"), width=160, anchor="w").pack(side="left")
+        self._label(ro, text=self._tr("t2.save_list_csv"), width=160, anchor="w").pack(side="left")
         ctk.CTkEntry(ro, textvariable=self._t2_out).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
-            ro, text=self._tr("common.browse"), width=self._browse_w, height=_BTN_H, command=self._browse_t2_out
+            ro, text=self._tr("common.browse"), width=self._browse_w, command=self._browse_t2_out,
+            **self._button_kw("ghost", height=_BTN_H),
         ).pack(side="right")
 
-        bf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        bf = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
         bf.pack(fill="x", **pad)
-        ctk.CTkButton(
+        self._btn_t2_scan = ctk.CTkButton(
             bf,
             text=self._tr("t2.run_scan"),
             width=_btn_w(self._tr("t2.run_scan")),
-            height=30,
             command=self._run_t2_scan,
-        ).pack(side="left", padx=(0, 8))
-        _label(bf, text=self._tr("t1.send_csv_to"), text_color=_LABEL_HINT).pack(side="left", padx=(8, 4))
+            **self._button_kw("primary_emphasis", height=_BTN_H),
+        )
+        self._btn_t2_scan.pack(side="left", padx=(0, 8))
+        self._label(bf, text=self._tr("t1.send_csv_to"), text_color=self._pal["muted"]).pack(side="left", padx=(8, 4))
         ctk.CTkButton(
             bf,
             text=self._tr("t1.tab3_rename"),
             width=_btn_w(self._tr("t1.tab3_rename")),
-            height=_BTN_H,
             command=self._t2_push_to_tab3,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left", padx=(0, 4))
         ctk.CTkButton(
             bf,
             text=self._tr("t1.tab4_move"),
             width=_btn_w(self._tr("t1.tab4_move")),
-            height=_BTN_H,
             command=self._t2_push_to_tab4,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left", padx=(0, 4))
         ctk.CTkButton(
             bf,
             text=self._tr("t1.tab5_schema"),
             width=_btn_w(self._tr("t1.tab5_schema")),
-            height=_BTN_H,
             command=self._t2_push_to_tab5,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left")
 
     def _pack_list_filter_rows(
@@ -1227,7 +1608,7 @@ class FileToolsApp(ctk.CTk):
         clabels = [c_and, c_or]
 
         def one_row(text_var: ctk.StringVar, fv: ctk.StringVar, cv: ctk.StringVar, ph: str) -> None:
-            row = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
+            row = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=32)
             row.pack(fill="x", padx=10, pady=(0, 4))
             row.pack_propagate(False)
 
@@ -1239,12 +1620,22 @@ class FileToolsApp(ctk.CTk):
                 cv.set("and" if choice == c_and else "or")
                 on_change()
 
-            mf = ctk.CTkOptionMenu(row, values=flabels, command=on_field_pick, width=158, height=28)
+            mf = ctk.CTkOptionMenu(
+                row,
+                values=flabels,
+                command=on_field_pick,
+                **{**self._option_kw(), "width": 158},
+            )
             mf.pack(side="left", padx=(0, 6))
             fk = fv.get()
             mf.set(flabels[keys.index(fk) if fk in keys else 0])
 
-            mc = ctk.CTkOptionMenu(row, values=clabels, command=on_combine_pick, width=72, height=28)
+            mc = ctk.CTkOptionMenu(
+                row,
+                values=clabels,
+                command=on_combine_pick,
+                **{**self._option_kw(), "width": 72},
+            )
             mc.pack(side="left", padx=(0, 8))
             mc.set(c_and if cv.get() == "and" else c_or)
 
@@ -1264,7 +1655,7 @@ class FileToolsApp(ctk.CTk):
 
     def _build_tab3(self, parent: ctk.CTkFrame) -> None:
         pad = self._pad()
-        _label(
+        self._label(
             parent,
             text=self._tr("t3.steps"),
             anchor="w",
@@ -1272,10 +1663,10 @@ class FileToolsApp(ctk.CTk):
             justify="left",
         ).pack(fill="x", **pad)
 
-        top = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
+        top = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=32)
         top.pack(fill="x", padx=10, pady=(2, 4))
         top.pack_propagate(False)
-        _label(top, text=self._tr("common.csv_file"), width=100, anchor="w").pack(side="left")
+        self._label(top, text=self._tr("common.csv_file"), width=100, anchor="w").pack(side="left")
         self._ph_string_entry(
             top,
             self._t3_csv,
@@ -1283,29 +1674,30 @@ class FileToolsApp(ctk.CTk):
             height=28,
         ).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
-            top, text=self._tr("common.browse"), width=self._browse_w, height=_BTN_H, command=self._browse_t3_csv
+            top, text=self._tr("common.browse"), width=self._browse_w, command=self._browse_t3_csv,
+            **self._button_kw("ghost", height=_BTN_H),
         ).pack(side="right", padx=(4, 0))
         ctk.CTkButton(
             top,
             text=self._tr("common.load"),
             width=_btn_w(self._tr("common.load")),
-            height=_BTN_H,
             command=self._t3_load_csv,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="right", padx=(4, 0))
         ctk.CTkButton(
             top,
             text=self._tr("t3.save_csv"),
             width=_btn_w(self._tr("t3.save_csv")),
-            height=_BTN_H,
             command=self._t3_save_csv,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="right")
 
-        _label(
+        self._label(
             parent,
             text=self._tr("t3.hint_csv"),
             anchor="w",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         ).pack(fill="x", padx=10, pady=(0, 2))
 
         self._pack_list_filter_rows(
@@ -1319,11 +1711,11 @@ class FileToolsApp(ctk.CTk):
             field_keys=_FILTER_FIELD_KEYS_TAB34,
             inc_placeholder=self._tr("t3.filter_placeholder"),
             ex_placeholder=self._tr("common.exclude_placeholder"),
-            on_change=self._t3_rebuild_tree,
+            on_change=self._schedule_t3_filter_rebuild,
         )
 
         batch_body = self._collapsible_section(parent, title_key="t3.section_batch_title", start_open=True)
-        edit_row = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE, height=32)
+        edit_row = ctk.CTkFrame(batch_body, fg_color=self._pal["panel"], height=32)
         edit_row.pack(fill="x", padx=10, pady=(4, 4))
         edit_row.pack_propagate(False)
         self._ph_string_entry(
@@ -1336,11 +1728,11 @@ class FileToolsApp(ctk.CTk):
             edit_row,
             text=self._tr("t3.apply_selected"),
             width=_btn_w(self._tr("t3.apply_selected")),
-            height=_BTN_H,
             command=self._t3_apply_leaf_selection,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="right")
 
-        rule = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE, height=32)
+        rule = ctk.CTkFrame(batch_body, fg_color=self._pal["panel"], height=32)
         rule.pack(fill="x", padx=10, pady=(0, 4))
         rule.pack_propagate(False)
         self._ph_string_entry(
@@ -1357,24 +1749,24 @@ class FileToolsApp(ctk.CTk):
             width=140,
             height=28,
         ).pack(side="left", padx=(0, 12))
-        rule_btns = ctk.CTkFrame(rule, fg_color=_UI_SURFACE)
+        rule_btns = ctk.CTkFrame(rule, fg_color=self._pal["panel"])
         rule_btns.pack(side="left", padx=(8, 0))
         ctk.CTkButton(
             rule_btns,
             text=self._tr("t3.apply_search"),
             width=_btn_w(self._tr("t3.apply_search")),
-            height=_BTN_H,
             command=self._t3_apply_rule_filtered,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left", padx=(0, 6))
         ctk.CTkButton(
             rule_btns,
             text=self._tr("t3.apply_selected"),
             width=_btn_w(self._tr("t3.apply_selected")),
-            height=_BTN_H,
             command=self._t3_apply_rule_selected,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left")
 
-        fr_row = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE, height=32)
+        fr_row = ctk.CTkFrame(batch_body, fg_color=self._pal["panel"], height=32)
         fr_row.pack(fill="x", padx=10, pady=(0, 4))
         fr_row.pack_propagate(False)
         self._ph_string_entry(
@@ -1395,25 +1787,26 @@ class FileToolsApp(ctk.CTk):
             fr_row,
             text=self._tr("t3.ignore_case"),
             variable=self._t3_replace_ci,
+            **self._checkbox_kw(),
         ).pack(side="left", padx=(0, 8))
-        fr_btns = ctk.CTkFrame(fr_row, fg_color=_UI_SURFACE)
+        fr_btns = ctk.CTkFrame(fr_row, fg_color=self._pal["panel"])
         fr_btns.pack(side="left", padx=(4, 0))
         ctk.CTkButton(
             fr_btns,
             text=self._tr("t3.fr_search"),
             width=_btn_w(self._tr("t3.fr_search")),
-            height=_BTN_H,
             command=self._t3_apply_find_replace_filtered,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left", padx=(0, 6))
         ctk.CTkButton(
             fr_btns,
             text=self._tr("t3.fr_selected"),
             width=_btn_w(self._tr("t3.fr_selected")),
-            height=_BTN_H,
             command=self._t3_apply_find_replace_selected,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left")
 
-        ou = ctk.CTkFrame(batch_body, fg_color=_UI_SURFACE, height=32)
+        ou = ctk.CTkFrame(batch_body, fg_color=self._pal["panel"], height=32)
         ou.pack(fill="x", padx=10, pady=(0, 6))
         ou.pack_propagate(False)
         self._ph_string_entry(
@@ -1426,29 +1819,29 @@ class FileToolsApp(ctk.CTk):
             ou,
             text=self._tr("common.browse"),
             width=self._browse_w,
-            height=_BTN_H,
             command=self._browse_t3_only_under,
+            **self._button_kw("ghost", height=_BTN_H),
         ).pack(side="right")
 
-        _label(
+        self._label(
             parent,
             text=self._tr("t3.tree_context_hint"),
             anchor="w",
             justify="left",
             wraplength=880,
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=11),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         ).pack(fill="x", padx=10, pady=(0, 2))
 
         tree_outer = ctk.CTkFrame(
             parent,
-            fg_color=_UI_SURFACE,
+            fg_color=self._pal["panel"],
             corner_radius=6,
             border_width=1,
-            border_color=("gray72", "gray28"),
+            border_color=self._pal["border"],
         )
         tree_outer.pack(fill="both", expand=True, padx=10, pady=(0, 6))
-        tree_frame = ctk.CTkFrame(tree_outer, fg_color=_UI_SURFACE)
+        tree_frame = ctk.CTkFrame(tree_outer, fg_color=self._pal["panel"])
         tree_frame.pack(fill="both", expand=True, padx=3, pady=3)
         self._apply_ttk_treeview_style()
 
@@ -1472,31 +1865,31 @@ class FileToolsApp(ctk.CTk):
         self._tree.bind("<Double-1>", lambda e: self._t3_focus_edit_leaf())
         self._tree.bind("<Button-3>", self._t3_tree_context_menu)
 
-        runf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=36)
+        runf = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=36)
         runf.pack(fill="x", padx=10, pady=(0, 6))
         runf.pack_propagate(False)
-        ctk.CTkCheckBox(runf, text=self._tr("t3.preview_only"), variable=self._t3_dry).pack(side="left", padx=(0, 12))
+        ctk.CTkCheckBox(
+            runf, text=self._tr("t3.preview_only"), variable=self._t3_dry, **self._checkbox_kw()
+        ).pack(side="left", padx=(0, 12))
         ctk.CTkButton(
             runf,
             text=self._tr("t3.rename_disk"),
             width=_btn_w(self._tr("t3.rename_disk")),
-            height=_BTN_H,
-            fg_color=_BTN_ACCENT,
-            hover_color=_BTN_ACCENT_HOVER,
             command=self._t3_run_renames,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             runf,
             text=self._tr("t3.clear_new_names"),
             width=_btn_w(self._tr("t3.clear_new_names")),
-            height=_BTN_H,
             command=self._t3_clear_filtered_leaves,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left")
 
         fold_body = self._collapsible_section(parent, title_key="t3.section_folder_title", start_open=False)
         warn_fr = ctk.CTkFrame(fold_body, fg_color=("#8b3a3a", "#5c1f1f"), corner_radius=8)
         warn_fr.pack(fill="x", **pad)
-        _label(
+        self._label(
             warn_fr,
             text=self._tr("t3.folder_warn"),
             text_color=("#fff", "#ffcccc"),
@@ -1507,19 +1900,20 @@ class FileToolsApp(ctk.CTk):
 
         fr = ctk.CTkFrame(warn_fr, fg_color="transparent")
         fr.pack(fill="x", padx=10, pady=(0, 10))
-        _label(fr, text=self._tr("common.folder"), width=80, anchor="w", fg_color="transparent").pack(side="left")
+        self._label(fr, text=self._tr("common.folder"), width=80, anchor="w", fg_color="transparent").pack(side="left")
         self._ph_string_entry(
             fr,
             self._t3_fold_src,
             placeholder=self._tr("t3.ph.fold_src"),
         ).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
-            fr, text=self._tr("common.browse"), width=self._browse_w, height=_BTN_H, command=self._browse_t3_fold_src
+            fr, text=self._tr("common.browse"), width=self._browse_w, command=self._browse_t3_fold_src,
+            **self._button_kw("ghost", height=_BTN_H),
         ).pack(side="right")
 
         fr2 = ctk.CTkFrame(warn_fr, fg_color="transparent")
         fr2.pack(fill="x", padx=10, pady=(0, 10))
-        _label(fr2, text=self._tr("common.new_name"), width=80, anchor="w", fg_color="transparent").pack(side="left")
+        self._label(fr2, text=self._tr("common.new_name"), width=80, anchor="w", fg_color="transparent").pack(side="left")
         self._ph_string_entry(
             fr2,
             self._t3_fold_new,
@@ -1530,35 +1924,33 @@ class FileToolsApp(ctk.CTk):
             warn_fr,
             text=self._tr("t3.fold_confirm"),
             variable=self._t3_fold_confirm,
-            text_color=("#fff", "#eee"),
+            **self._checkbox_kw(text_color=("#fff", "#eee")),
         ).pack(anchor="w", padx=10, pady=(0, 6))
 
         ctk.CTkButton(
             warn_fr,
             text=self._tr("t3.fold_rename_btn"),
             width=_btn_w(self._tr("t3.fold_rename_btn")),
-            height=_BTN_H,
-            fg_color="#8b0000",
-            hover_color="#a52a2a",
             command=self._t3_run_folder_rename,
+            **self._button_kw("danger_soft", height=_BTN_H),
         ).pack(anchor="w", padx=10, pady=(0, 10))
 
     def _build_tab4(self, parent: ctk.CTkFrame) -> None:
         pad = self._pad()
-        _label(
+        self._label(
             parent,
             text=self._tr("t4.intro_block"),
             anchor="w",
             wraplength=860,
             justify="left",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         ).pack(fill="x", **pad)
 
-        top4 = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
+        top4 = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=32)
         top4.pack(fill="x", padx=10, pady=(2, 4))
         top4.pack_propagate(False)
-        _label(top4, text=self._tr("common.csv_file"), width=100, anchor="w").pack(side="left")
+        self._label(top4, text=self._tr("common.csv_file"), width=100, anchor="w").pack(side="left")
         self._ph_string_entry(
             top4,
             self._t4_csv,
@@ -1566,26 +1958,23 @@ class FileToolsApp(ctk.CTk):
             height=28,
         ).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
-            top4, text=self._tr("common.browse"), width=self._browse_w, height=_BTN_H, command=self._browse_t4_csv
+            top4, text=self._tr("common.browse"), width=self._browse_w, command=self._browse_t4_csv,
+            **self._button_kw("ghost", height=_BTN_H),
         ).pack(side="right", padx=(4, 0))
         ctk.CTkButton(
             top4,
             text=self._tr("common.load"),
             width=_btn_w(self._tr("common.load")),
-            height=_BTN_H,
             command=self._t4_load_csv,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="right", padx=(4, 0))
         ctk.CTkButton(
             top4,
             text=self._tr("t4.export_csv"),
             width=_btn_w(self._tr("t4.export_csv")),
-            height=_BTN_H,
             command=self._t4_export_csv,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="right")
-
-        def _t4_filter_ui_change() -> None:
-            self._t4_rebuild_tree()
-            self._t4_schedule_preview_refresh()
 
         self._pack_list_filter_rows(
             parent,
@@ -1598,19 +1987,19 @@ class FileToolsApp(ctk.CTk):
             field_keys=_FILTER_FIELD_KEYS_TAB34,
             inc_placeholder=self._tr("t3.filter_placeholder"),
             ex_placeholder=self._tr("common.exclude_placeholder"),
-            on_change=_t4_filter_ui_change,
+            on_change=self._t4_schedule_filter_ui_update,
             use_keyrelease=False,
         )
 
         tree_outer4 = ctk.CTkFrame(
             parent,
-            fg_color=_UI_SURFACE,
+            fg_color=self._pal["panel"],
             corner_radius=6,
             border_width=1,
-            border_color=("gray72", "gray28"),
+            border_color=self._pal["border"],
         )
         tree_outer4.pack(fill="both", expand=True, padx=10, pady=(0, 6))
-        tree_frame = ctk.CTkFrame(tree_outer4, fg_color=_UI_SURFACE)
+        tree_frame = ctk.CTkFrame(tree_outer4, fg_color=self._pal["panel"])
         tree_frame.pack(fill="both", expand=True, padx=3, pady=3)
         self._apply_ttk_treeview_style()
         self._t4_tree = ttk.Treeview(
@@ -1631,18 +2020,18 @@ class FileToolsApp(ctk.CTk):
         self._place_ttk_tree_with_scrollbars(tree_frame, self._t4_tree)
         self._t4_tree.bind("<Button-3>", self._t4_tree_context_menu)
 
-        self._t4_stats = _label(
+        self._t4_stats = self._label(
             parent,
             text=self._tr("t4.stats_empty"),
             anchor="w",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         )
         self._t4_stats.pack(fill="x", padx=10, pady=(0, 4))
 
-        tf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        tf = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
         tf.pack(fill="x", **pad)
-        _label(tf, text=self._tr("t4.where_move"), width=200, anchor="w").pack(side="left")
+        self._label(tf, text=self._tr("t4.where_move"), width=200, anchor="w").pack(side="left")
         self._ph_string_entry(
             tf,
             self._t4_target_folder,
@@ -1652,20 +2041,20 @@ class FileToolsApp(ctk.CTk):
             tf,
             text=self._tr("t4.target_from_row"),
             width=_btn_w(self._tr("t4.target_from_row")),
-            height=_BTN_H,
             command=self._t4_set_target_from_selected_row_folder,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left", padx=(0, 8))
         ctk.CTkButton(
             tf,
             text=self._tr("common.browse"),
             width=self._browse_w,
-            height=_BTN_H,
             command=self._browse_t4_target_folder,
+            **self._button_kw("ghost", height=_BTN_H),
         ).pack(side="right")
 
-        sf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        sf = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
         sf.pack(fill="x", **pad)
-        _label(sf, text=self._tr("t4.subfolder_label"), width=200, anchor="w").pack(side="left")
+        self._label(sf, text=self._tr("t4.subfolder_label"), width=200, anchor="w").pack(side="left")
         self._ph_string_entry(
             sf,
             self._t4_subfolder,
@@ -1675,75 +2064,76 @@ class FileToolsApp(ctk.CTk):
             sf,
             text=self._tr("t4.suggest"),
             width=_btn_w(self._tr("t4.suggest")),
-            height=_BTN_H,
             command=self._t4_suggest_target_from_filtered,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="right", padx=(8, 0))
 
         path_tips_body = self._collapsible_section(
             parent, title_key="t4.section_path_tips_title", start_open=False
         )
-        _label(
+        self._label(
             path_tips_body,
             text=self._tr("t4.move_hint"),
             anchor="w",
             wraplength=860,
             justify="left",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         ).pack(fill="x", **pad)
 
-        mf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        mf = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
         mf.pack(fill="x", **pad)
         ctk.CTkCheckBox(
             mf,
             text=self._tr("t4.per_source"),
             variable=self._t4_per_source,
+            **self._checkbox_kw(),
         ).pack(side="left")
 
-        runf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        runf = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
         runf.pack(fill="x", **pad)
         ctk.CTkCheckBox(
             runf,
             text=self._tr("t4.preview_only"),
             variable=self._t4_dry,
+            **self._checkbox_kw(),
         ).pack(side="left", padx=(0, 12))
         ctk.CTkCheckBox(
             runf,
             text=self._tr("t4.selected_only"),
             variable=self._t4_use_selected,
+            **self._checkbox_kw(),
         ).pack(side="left", padx=(0, 12))
 
-        b = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        b = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
         b.pack(fill="x", **pad)
         ctk.CTkButton(
             b,
             text=self._tr("t4.move_disk"),
             width=_btn_w(self._tr("t4.move_disk")),
-            height=30,
-            fg_color=_BTN_ACCENT,
-            hover_color=_BTN_ACCENT_HOVER,
             command=self._t4_execute_move,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left")
-        self._t4_plan = _label(
+        self._t4_plan = self._label(
             b,
             text=self._tr("t4.plan_empty"),
             anchor="w",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         )
         self._t4_plan.pack(side="left", padx=(12, 0))
 
         preview_body = self._collapsible_section(
             parent, title_key="t4.preview_section_title", start_open=True
         )
-        pv_btns = ctk.CTkFrame(preview_body, fg_color=_UI_SURFACE)
+        pv_btns = ctk.CTkFrame(preview_body, fg_color=self._pal["panel"])
         pv_btns.pack(fill="x", **pad)
         ctk.CTkButton(
             pv_btns,
             text=self._tr("t4.refresh_preview"),
             width=_btn_w(self._tr("t4.refresh_preview")),
-            height=_BTN_H,
             command=self._t4_refresh_preview,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left")
         self._t4_preview = ctk.CTkTextbox(preview_body, height=130, activate_scrollbars=True)
         self._t4_preview.pack(fill="both", expand=False, **pad)
@@ -1751,10 +2141,10 @@ class FileToolsApp(ctk.CTk):
 
     def _build_tab5(self, parent: ctk.CTkFrame) -> None:
         pad = self._pad()
-        top = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
+        top = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=32)
         top.pack(fill="x", padx=10, pady=(2, 4))
         top.pack_propagate(False)
-        _label(top, text=self._tr("common.csv_file"), width=100, anchor="w").pack(side="left")
+        self._label(top, text=self._tr("common.csv_file"), width=100, anchor="w").pack(side="left")
         self._ph_string_entry(
             top,
             self._t5_csv,
@@ -1762,21 +2152,22 @@ class FileToolsApp(ctk.CTk):
             height=28,
         ).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
-            top, text=self._tr("common.browse"), width=self._browse_w, height=_BTN_H, command=self._browse_t5_csv
+            top, text=self._tr("common.browse"), width=self._browse_w, command=self._browse_t5_csv,
+            **self._button_kw("ghost", height=_BTN_H),
         ).pack(side="right", padx=(4, 0))
         ctk.CTkButton(
             top,
             text=self._tr("common.load"),
             width=_btn_w(self._tr("common.load")),
-            height=_BTN_H,
             command=self._t5_load_csv,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="right", padx=(4, 0))
         ctk.CTkButton(
             top,
             text=self._tr("t3.save_csv"),
             width=_btn_w(self._tr("t3.save_csv")),
-            height=_BTN_H,
             command=self._t5_save_csv,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="right")
 
         self._pack_list_filter_rows(
@@ -1790,29 +2181,29 @@ class FileToolsApp(ctk.CTk):
             field_keys=_FILTER_FIELD_KEYS_TAB5,
             inc_placeholder=self._tr("t3.filter_placeholder"),
             ex_placeholder=self._tr("common.exclude_placeholder"),
-            on_change=self._t5_rebuild_tree,
+            on_change=lambda: self._t5_schedule_rebuild_tree(delay_ms=_FILTER_TYPING_DEBOUNCE_MS),
             use_keyrelease=False,
         )
 
-        _label(
+        self._label(
             parent,
             text=self._tr("t5.selection_hint"),
             anchor="w",
             justify="left",
             wraplength=880,
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=11),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         ).pack(fill="x", padx=10, pady=(0, 4))
 
         tree_outer5 = ctk.CTkFrame(
             parent,
-            fg_color=_UI_SURFACE,
+            fg_color=self._pal["panel"],
             corner_radius=6,
             border_width=1,
-            border_color=("gray72", "gray28"),
+            border_color=self._pal["border"],
         )
         tree_outer5.pack(fill="both", expand=True, padx=10, pady=(0, 6))
-        tree_frame = ctk.CTkFrame(tree_outer5, fg_color=_UI_SURFACE)
+        tree_frame = ctk.CTkFrame(tree_outer5, fg_color=self._pal["panel"])
         tree_frame.pack(fill="both", expand=True, padx=3, pady=3)
         self._apply_ttk_treeview_style()
         self._t5_tree = ttk.Treeview(
@@ -1864,59 +2255,68 @@ class FileToolsApp(ctk.CTk):
         self._t5_full_schema_only_widgets = []
         self._t5_title_max_entry = None
 
-        inc_fr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        inc_fr = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
         inc_fr.pack(fill="x", padx=10, pady=(4, 2))
-        _label(
+        self._label(
             inc_fr,
             text=self._tr("t5.from_csv_label"),
             anchor="w",
             wraplength=880,
         ).pack(fill="x", anchor="w", pady=(0, 2))
-        inc_row = ctk.CTkFrame(inc_fr, fg_color=_UI_SURFACE)
+        inc_row = ctk.CTkFrame(inc_fr, fg_color=self._pal["panel"])
         inc_row.pack(fill="x")
-        cb_y = ctk.CTkCheckBox(inc_row, text=self._tr("t5.include_year"), variable=self._t5_include_year)
+        cb_y = ctk.CTkCheckBox(
+            inc_row, text=self._tr("t5.include_year"), variable=self._t5_include_year, **self._checkbox_kw()
+        )
         cb_y.pack(side="left", padx=(0, 12))
         self._t5_full_schema_only_widgets.append(cb_y)
         cb_res = ctk.CTkCheckBox(
-            inc_row, text=self._tr("t5.include_resolution"), variable=self._t5_include_resolution
+            inc_row,
+            text=self._tr("t5.include_resolution"),
+            variable=self._t5_include_resolution,
+            **self._checkbox_kw(),
         )
         cb_res.pack(side="left", padx=(0, 12))
         self._t5_full_schema_only_widgets.append(cb_res)
-        cb_rt = ctk.CTkCheckBox(inc_row, text=self._tr("t5.include_rating"), variable=self._t5_include_rating)
+        cb_rt = ctk.CTkCheckBox(
+            inc_row, text=self._tr("t5.include_rating"), variable=self._t5_include_rating, **self._checkbox_kw()
+        )
         cb_rt.pack(side="left", padx=(0, 12))
         self._t5_full_schema_only_widgets.append(cb_rt)
 
-        title_fr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        title_fr = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
         title_fr.pack(fill="x", padx=10, pady=(2, 0))
-        title_top = ctk.CTkFrame(title_fr, fg_color=_UI_SURFACE)
+        title_top = ctk.CTkFrame(title_fr, fg_color=self._pal["panel"])
         title_top.pack(fill="x")
-        _label(title_top, text=self._tr("t5.title_max"), width=160, anchor="w").pack(side="left", padx=(0, 6))
+        self._label(title_top, text=self._tr("t5.title_max"), width=160, anchor="w").pack(side="left", padx=(0, 6))
         self._t5_title_max_entry = ctk.CTkEntry(title_top, textvariable=self._t5_title_max, width=56)
         self._t5_title_max_entry.pack(side="left", padx=(0, 12))
         ctk.CTkCheckBox(
             title_top,
             text=self._tr("t5.preserve_tags_on_shorten"),
             variable=self._t5_preserve_tags_on_shorten,
+            **self._checkbox_kw(),
         ).pack(side="left", padx=(0, 8))
-        _label(
+        self._label(
             title_fr,
             text=self._tr("t5.preserve_tags_hint"),
             anchor="w",
             justify="left",
             wraplength=880,
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=11),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         ).pack(fill="x", anchor="w", pady=(2, 0))
 
-        rr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
+        rr = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=32)
         rr.pack_propagate(False)
         rr.pack(fill="x", padx=10, pady=(0, 2))
-        _label(rr, text=self._tr("t5.resolution_mode"), width=200, anchor="w").pack(side="left")
+        self._label(rr, text=self._tr("t5.resolution_mode"), width=200, anchor="w").pack(side="left")
         rb_hp = ctk.CTkRadioButton(
             rr,
             text=self._tr("t5.res_heightp"),
             variable=self._t5_resolution_mode,
             value="heightp",
+            **self._radio_kw(),
         )
         rb_hp.pack(side="left", padx=(0, 12))
         self._t5_full_schema_only_widgets.append(rb_hp)
@@ -1925,68 +2325,72 @@ class FileToolsApp(ctk.CTk):
             text=self._tr("t5.res_wxh"),
             variable=self._t5_resolution_mode,
             value="wxh",
+            **self._radio_kw(),
         )
         rb_wh.pack(side="left", padx=(0, 12))
         self._t5_full_schema_only_widgets.append(rb_wh)
-        probe_btn = ctk.CTkButton(
+        self._btn_t5_probe = ctk.CTkButton(
             rr,
             text=self._tr("t5.refresh_probe"),
             width=_btn_w(self._tr("t5.refresh_probe")),
-            height=_BTN_H,
             command=self._t5_refresh_probe,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         )
-        probe_btn.pack(side="left")
-        self._t5_full_schema_only_widgets.append(probe_btn)
+        self._btn_t5_probe.pack(side="left")
+        self._t5_full_schema_only_widgets.append(self._btn_t5_probe)
 
-        _label(
+        self._label(
             parent,
             text=self._tr("t5.tag_structure_hint"),
             anchor="w",
             justify="left",
             wraplength=880,
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=11),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         ).pack(fill="x", padx=10, pady=(0, 2))
 
-        append_fr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE)
+        append_fr = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
         append_fr.pack(fill="x", padx=10, pady=(0, 2))
         ctk.CTkCheckBox(
             append_fr,
             text=self._tr("t5.append_tags_only"),
             variable=self._t5_append_tags_only,
+            **self._checkbox_kw(),
         ).pack(side="left", anchor="w")
-        _label(
+        self._label(
             parent,
             text=self._tr("t5.append_tags_hint_short"),
             anchor="w",
             justify="left",
             wraplength=880,
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=11),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         ).pack(fill="x", padx=10, pady=(0, 4))
 
         for i in range(5):
-            tag_row = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=30)
+            tag_row = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=30)
             tag_row.pack_propagate(False)
             tag_row.pack(fill="x", padx=10, pady=(0, 2))
-            ctk.CTkCheckBox(tag_row, text="", variable=self._t5_tag_en[i]).pack(side="left", padx=(0, 6))
+            ctk.CTkCheckBox(tag_row, text="", variable=self._t5_tag_en[i], **self._checkbox_kw()).pack(
+                side="left", padx=(0, 6)
+            )
             self._ph_string_entry(
                 tag_row,
                 self._t5_tag_txt[i],
                 placeholder=self._tr("t5.tag_slot_ph", n=i + 1),
             ).pack(side="left", fill="x", expand=True)
 
-        preset_fr = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=32)
+        preset_fr = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=32)
         preset_fr.pack_propagate(False)
         preset_fr.pack(fill="x", **pad)
-        _label(preset_fr, text=self._tr("t5.preset_label"), width=120, anchor="w").pack(side="left")
+        self._label(preset_fr, text=self._tr("t5.preset_label"), width=120, anchor="w").pack(side="left")
         none_lbl = self._tr("t5.preset_none")
         self._t5_preset_menu = ctk.CTkOptionMenu(
             preset_fr,
             values=[none_lbl],
             variable=self._t5_preset_pick,
             command=self._t5_on_preset_menu_change,
-            width=200,
+            **{**self._option_kw(), "width": 200},
         )
         self._t5_preset_menu.pack(side="left", padx=(0, 8))
         self._ph_string_entry(
@@ -1999,51 +2403,50 @@ class FileToolsApp(ctk.CTk):
             preset_fr,
             text=self._tr("t5.preset_save"),
             width=_btn_w(self._tr("t5.preset_save")),
-            height=_BTN_H,
             command=self._t5_save_preset_click,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left", padx=(0, 6))
         ctk.CTkButton(
             preset_fr,
             text=self._tr("t5.preset_delete"),
             width=_btn_w(self._tr("t5.preset_delete")),
-            height=_BTN_H,
             command=self._t5_delete_preset_click,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left")
 
-        runf = ctk.CTkFrame(parent, fg_color=_UI_SURFACE, height=40)
+        runf = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=40)
         runf.pack_propagate(False)
         runf.pack(fill="x", **pad)
         ctk.CTkButton(
             runf,
             text=self._tr("t5.fill_new_leaf"),
             width=_btn_w(self._tr("t5.fill_new_leaf")),
-            height=_BTN_H,
             command=self._t5_fill_new_leaf,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left", padx=(0, 8))
-        ctk.CTkCheckBox(runf, text=self._tr("t3.preview_only"), variable=self._t5_dry).pack(
-            side="left", padx=(0, 12)
-        )
+        ctk.CTkCheckBox(
+            runf, text=self._tr("t3.preview_only"), variable=self._t5_dry, **self._checkbox_kw()
+        ).pack(side="left", padx=(0, 12))
         sel_box = ctk.CTkFrame(
             runf,
-            fg_color=_T5_SEL_BOX_BG,
+            fg_color=self._pal["panel_elev"],
             corner_radius=8,
             border_width=2,
-            border_color=_T5_SEL_BOX_BORDER,
+            border_color=self._pal["cyan_dim"],
         )
         sel_box.pack(side="left", padx=(4, 14), pady=3)
         ctk.CTkCheckBox(
             sel_box,
             text=self._tr("t5.selected_only"),
             variable=self._t5_use_selected,
+            **self._checkbox_kw(),
         ).pack(side="left", padx=10, pady=6)
         ctk.CTkButton(
             runf,
             text=self._tr("t3.rename_disk"),
             width=_btn_w(self._tr("t3.rename_disk")),
-            height=30,
-            fg_color=_BTN_ACCENT,
-            hover_color=_BTN_ACCENT_HOVER,
             command=self._t5_run_renames,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="left")
 
         self._t5_apply_mode_dependent_ui_state()
@@ -2538,35 +2941,72 @@ class FileToolsApp(ctk.CTk):
         self._save_settings()
 
     def _t5_refresh_probe(self) -> None:
+        if self._t5_probe_busy:
+            self._log(self._tr("log.busy_probe"))
+            return
         exe = find_ffprobe_executable()
         if not exe:
             self._log(self._tr("log.t5_no_ffprobe"))
             return
         vis = self._t5_visible_indices()
-        total = len(vis)
-        ok = 0
-        try:
-            if total > 0:
-                self._work_progress_probe(0, total)
-            for step, i in enumerate(vis):
-                row = self._t5_rows[i]
-                key = self._t5_cache_key_for_row(row)
-                if key:
-                    w, h, err = ffprobe_video_size(key, ffprobe_exe=exe)
-                    if w and h:
-                        self._t5_ffprobe_cache[key] = (w, h)
-                        ok += 1
-                    elif err:
-                        fp = row.get("file_path", "")
-                        self._log(self._tr("log.t5_probe_row_fail", path=fp, err=err[:120]))
-                done = step + 1
-                if total > 0 and (done == 1 or done % 10 == 0 or done == total):
-                    self._work_progress_probe(done, total)
-                    self._tk_keepalive(step)
-            self._log(self._tr("log.t5_probed", ok=ok, total=len(vis)))
+        keys_order: list[str] = []
+        seen_k: set[str] = set()
+        idx_by_key: dict[str, int] = {}
+        for i in vis:
+            row = self._t5_rows[i]
+            key = self._t5_cache_key_for_row(row)
+            if not key or key in seen_k:
+                continue
+            seen_k.add(key)
+            keys_order.append(key)
+            idx_by_key[key] = i
+        if not keys_order:
+            self._log(self._tr("log.t5_probed", ok=0, total=len(vis)))
             self._t5_rebuild_tree()
-        finally:
-            self._clear_work_progress()
+            return
+
+        total_k = len(keys_order)
+        self._t5_probe_busy = True
+        if self._btn_t5_probe is not None:
+            self._btn_t5_probe.configure(state="disabled")
+        self._work_status.set(self._tr("common.work_background"))
+        self._work_progress_probe(0, total_k)
+
+        def prog(cur: int, tot: int) -> None:
+            self.after(0, lambda c=cur, t=tot: self._work_progress_probe(c, t))
+
+        def worker() -> None:
+            res, fails = ffprobe_paths_parallel(keys_order, ffprobe_exe=exe, progress=prog)
+            ik = dict(idx_by_key)
+            self.after(
+                0,
+                lambda res=res, fails=fails, ik=ik: self._finish_t5_probe_batch(res, fails, ik),
+            )
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_t5_probe_batch(
+        self,
+        res: dict[str, tuple[int, int]],
+        fails: list[tuple[str, str]],
+        idx_by_key: dict[str, int],
+    ) -> None:
+        self._t5_probe_busy = False
+        try:
+            if self._btn_t5_probe is not None:
+                self._btn_t5_probe.configure(state="normal")
+        except TclError:
+            pass
+        self._clear_work_progress()
+        for p, wh in res.items():
+            self._t5_ffprobe_cache[p] = wh
+        for p, err in fails:
+            i = idx_by_key.get(p, -1)
+            fp = self._t5_rows[i].get("file_path", "") if 0 <= i < len(self._t5_rows) else p
+            self._log(self._tr("log.t5_probe_row_fail", path=fp or p, err=err[:120]))
+        n_paths = len(res) + len(fails)
+        self._log(self._tr("log.t5_probed", ok=len(res), total=n_paths))
+        self._t5_rebuild_tree()
 
     def _t5_fill_new_leaf(self, *, silent: bool = False) -> None:
         idxs = self._t5_selected_indices() if self._t5_use_selected.get() else self._t5_visible_indices()
@@ -2713,18 +3153,50 @@ class FileToolsApp(ctk.CTk):
         add_opt("-FileNameContains", self._t1_name_contains.get())
         add_opt("-FileNameRegex", self._t1_name_regex.get())
 
+        if self._t1_export_busy:
+            self._log(self._tr("log.busy_export"))
+            return
+        self._t1_export_busy = True
+        if self._btn_t1_export is not None:
+            self._btn_t1_export.configure(state="disabled")
+        self._work_status.set(self._tr("common.work_background"))
         self._log(self._tr("log.t1_export_header"))
+        cwd = str(Path(ps1).parent)
+
+        def worker() -> None:
+            try:
+                r = subprocess.run(
+                    args,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    cwd=cwd,
+                )
+            except OSError as e:
+                self.after(0, lambda e=e: self._finish_t1_export(None, e, out))
+            else:
+                self.after(0, lambda r=r, o=out: self._finish_t1_export(r, None, o))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_t1_export(
+        self,
+        r: subprocess.CompletedProcess[str] | None,
+        err: OSError | None,
+        out: str,
+    ) -> None:
+        self._t1_export_busy = False
         try:
-            r = subprocess.run(
-                args,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                cwd=str(Path(ps1).parent),
-            )
-        except OSError as e:
-            self._log(self._tr("log.powershell_fail", e=e))
+            if self._btn_t1_export is not None:
+                self._btn_t1_export.configure(state="normal")
+        except TclError:
+            pass
+        self._clear_work_progress()
+        if err is not None:
+            self._log(self._tr("log.powershell_fail", e=err))
+            return
+        if r is None:
             return
         if r.stdout:
             self._log(r.stdout)
@@ -2763,6 +3235,9 @@ class FileToolsApp(ctk.CTk):
         return parts
 
     def _run_t2_scan(self) -> None:
+        if self._t2_scan_busy:
+            self._log(self._tr("log.busy_scan"))
+            return
         folder = self._t2_folder.get().strip()
         if not folder:
             self._log(self._tr("log.t2_pick_folder"))
@@ -2779,10 +3254,47 @@ class FileToolsApp(ctk.CTk):
         self._log(
             self._tr("log.t2_scanning", root=root, sub=self._t2_recursive.get()),
         )
-        rows = scan_folder_files(root, recursive=self._t2_recursive.get(), patterns=patterns or None)
-        write_rename_csv(Path(out), rows, self._app_csv_delim())
-        self._log(self._tr("log.wrote_items", n=len(rows), out=out))
-        self._last_shared_csv = str(Path(out).resolve())
+        out_path = Path(out)
+        delim = self._app_csv_delim()
+        recursive = self._t2_recursive.get()
+        pat_list = patterns or None
+        self._t2_scan_busy = True
+        if self._btn_t2_scan is not None:
+            self._btn_t2_scan.configure(state="disabled")
+        self._work_status.set(self._tr("common.work_background"))
+
+        def worker() -> None:
+            try:
+                rows = scan_folder_files(root, recursive=recursive, patterns=pat_list)
+                write_rename_csv(out_path, rows, delim)
+            except OSError as e:
+                self.after(0, lambda e=e, op=out_path: self._finish_t2_scan(None, e, op))
+            else:
+                self.after(0, lambda rows=rows, op=out_path: self._finish_t2_scan(rows, None, op))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_t2_scan(
+        self,
+        rows: list[dict[str, str]] | None,
+        err: OSError | None,
+        out_path: Path,
+    ) -> None:
+        self._t2_scan_busy = False
+        try:
+            if self._btn_t2_scan is not None:
+                self._btn_t2_scan.configure(state="normal")
+        except TclError:
+            pass
+        self._clear_work_progress()
+        if err is not None:
+            self._log(self._tr("log.save_failed", e=err))
+            return
+        if rows is None:
+            return
+        out_s = str(out_path)
+        self._log(self._tr("log.wrote_items", n=len(rows), out=out_s))
+        self._last_shared_csv = str(out_path.resolve())
         self._t3_csv.set(self._last_shared_csv)
         self._log(self._tr("log.tip_t3_set", path=self._last_shared_csv))
         self._save_settings()
@@ -3015,6 +3527,7 @@ class FileToolsApp(ctk.CTk):
         self._t4_refresh_preview()
 
     def _t4_load_csv(self) -> None:
+        self._cancel_t4_filter_ui_after()
         path = self._t4_csv.get().strip()
         if not path or not Path(path).is_file():
             self._log(self._tr("log.t4_need_csv"))
@@ -3169,6 +3682,7 @@ class FileToolsApp(ctk.CTk):
             )
 
     def _t3_load_csv(self) -> None:
+        self._cancel_t3_filter_rebuild_after()
         path = self._t3_csv.get().strip()
         if not path or not Path(path).is_file():
             self._log(self._tr("log.t3_need_csv"))
@@ -3773,7 +4287,7 @@ class FileToolsApp(ctk.CTk):
                 pass
             self._settings_dialog = None
 
-        top = ctk.CTkToplevel(self, fg_color=_UI_SURFACE)
+        top = ctk.CTkToplevel(self, fg_color=self._pal["bg"])
         self._settings_dialog = top
         top.title(self._tr("settings.title"))
         top.geometry("520x640")
@@ -3782,14 +4296,20 @@ class FileToolsApp(ctk.CTk):
         top.grab_set()
 
         pad = {"padx": 14, "pady": (8, 6)}
-        outer = ctk.CTkScrollableFrame(top, fg_color=_UI_SURFACE)
-        outer.pack(fill="both", expand=True, padx=4, pady=4)
+        outer = ctk.CTkScrollableFrame(
+            top,
+            fg_color=self._pal["panel"],
+            scrollbar_fg_color=self._pal["panel_elev"],
+            scrollbar_button_color=self._pal["border"],
+            scrollbar_button_hover_color=self._pal["cyan_dim"],
+        )
+        outer.pack(fill="both", expand=True, padx=10, pady=10)
 
-        _label(
+        self._label(
             outer,
             text=self._tr("settings.intro"),
             anchor="w",
-            font=ctk.CTkFont(weight="bold"),
+            font=FONT_SECTION,
         ).pack(fill="x", **pad)
 
         appearance = ctk.StringVar(value=self._appearance_mode.get())
@@ -3800,78 +4320,105 @@ class FileToolsApp(ctk.CTk):
         gql = ctk.StringVar(value=self._t1_graphql_path.get())
         lang_choice = ctk.StringVar(value=self._norm_lang_code(self._ui_language.get()))
 
-        _label(outer, text=self._tr("settings.language"), anchor="w", font=ctk.CTkFont(weight="bold")).pack(
+        self._label(outer, text=self._tr("settings.language"), anchor="w", font=FONT_SECTION).pack(
             fill="x", **pad
         )
         ctk.CTkSegmentedButton(
             outer,
             values=["en", "de", "es", "fr"],
             variable=lang_choice,
+            font=FONT_UI_SM,
+            fg_color=self._pal["panel_elev"],
+            selected_color=self._pal["cyan_dim"],
+            selected_hover_color=self._pal["cyan"],
+            unselected_color=self._pal["panel_elev"],
+            unselected_hover_color=self._pal["border"],
+            text_color=self._pal["text"],
         ).pack(anchor="w", padx=14, pady=(0, 4))
-        _label(
+        self._label(
             outer,
             text=self._tr("settings.language_hint"),
             anchor="w",
             wraplength=400,
             justify="left",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         ).pack(fill="x", padx=14, pady=(0, 8))
 
-        _label(outer, text=self._tr("settings.appearance"), anchor="w", font=ctk.CTkFont(weight="bold")).pack(
+        self._label(outer, text=self._tr("settings.appearance"), anchor="w", font=FONT_SECTION).pack(
             fill="x", **pad
         )
-        ctk.CTkSegmentedButton(outer, values=["dark", "light", "system"], variable=appearance).pack(
-            anchor="w", padx=14, pady=(0, 4)
-        )
+        ctk.CTkSegmentedButton(
+            outer,
+            values=["dark", "light", "system"],
+            variable=appearance,
+            font=FONT_UI_SM,
+            fg_color=self._pal["panel_elev"],
+            selected_color=self._pal["cyan_dim"],
+            selected_hover_color=self._pal["cyan"],
+            unselected_color=self._pal["panel_elev"],
+            unselected_hover_color=self._pal["border"],
+            text_color=self._pal["text"],
+        ).pack(anchor="w", padx=14, pady=(0, 4))
 
-        _label(
+        self._label(
             outer,
             text=self._tr("settings.column_sep"),
             anchor="w",
         ).pack(fill="x", **pad)
-        ctk.CTkSegmentedButton(outer, values=[";", ","], variable=delim).pack(anchor="w", padx=14, pady=(0, 8))
-        _label(
+        ctk.CTkSegmentedButton(
+            outer,
+            values=[";", ","],
+            variable=delim,
+            font=FONT_UI_SM,
+            fg_color=self._pal["panel_elev"],
+            selected_color=self._pal["cyan_dim"],
+            selected_hover_color=self._pal["cyan"],
+            unselected_color=self._pal["panel_elev"],
+            unselected_hover_color=self._pal["border"],
+            text_color=self._pal["text"],
+        ).pack(anchor="w", padx=14, pady=(0, 8))
+        self._label(
             outer,
             text=self._tr("settings.csv_detect"),
             anchor="w",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         ).pack(fill="x", padx=14, pady=(0, 8))
 
-        _label(outer, text=self._tr("settings.stash_group"), anchor="w", font=ctk.CTkFont(weight="bold")).pack(
+        self._label(outer, text=self._tr("settings.stash_group"), anchor="w", font=FONT_SECTION).pack(
             fill="x", **pad
         )
-        _label(
+        self._label(
             outer,
             text=self._tr("settings.stash_hint"),
             anchor="w",
             wraplength=400,
             justify="left",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         ).pack(fill="x", **pad)
 
-        _label(
+        self._label(
             outer,
             text=self._tr("settings.export_script_hint"),
             anchor="w",
             wraplength=400,
             justify="left",
-            text_color=_LABEL_HINT,
-            font=ctk.CTkFont(size=12),
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
         ).pack(fill="x", padx=14, pady=(0, 4))
 
-        ps1_row = ctk.CTkFrame(outer, fg_color=_UI_SURFACE)
+        ps1_row = ctk.CTkFrame(outer, fg_color=self._pal["panel"])
         ps1_row.pack(fill="x", **pad)
-        _label(ps1_row, text=self._tr("t1.export_script"), width=200, anchor="w").pack(side="left")
+        self._label(ps1_row, text=self._tr("t1.export_script"), width=200, anchor="w").pack(side="left")
         ctk.CTkEntry(ps1_row, textvariable=ps1).pack(side="left", fill="x", expand=True, padx=(0, 8))
         ctk.CTkButton(
             ps1_row,
             text=self._tr("common.browse"),
             width=self._browse_w,
-            height=_BTN_H,
             command=lambda: self._browse_t1_ps1_to_var(ps1),
+            **self._button_kw("ghost", height=_BTN_H),
         ).pack(side="right")
 
         for key, var, secret in (
@@ -3879,29 +4426,30 @@ class FileToolsApp(ctk.CTk):
             ("common.api_key", api, True),
             ("settings.graphql_path_label", gql, False),
         ):
-            row_f = ctk.CTkFrame(outer, fg_color=_UI_SURFACE)
+            row_f = ctk.CTkFrame(outer, fg_color=self._pal["panel"])
             row_f.pack(fill="x", **pad)
-            _label(row_f, text=self._tr(key), width=200, anchor="w").pack(side="left")
+            self._label(row_f, text=self._tr(key), width=200, anchor="w").pack(side="left")
             ctk.CTkEntry(row_f, textvariable=var, show="*" if secret else None).pack(
                 side="left", fill="x", expand=True, padx=(0, 8)
             )
 
-        gql_btns = ctk.CTkFrame(outer, fg_color=_UI_SURFACE)
+        gql_btns = ctk.CTkFrame(outer, fg_color=self._pal["panel"])
         gql_btns.pack(fill="x", padx=14, pady=(4, 8))
         gql_clear = self._tr("settings.graphql_clear")
         ctk.CTkButton(
             gql_btns,
             text=gql_clear,
             width=_btn_w(gql_clear),
-            height=_BTN_H,
             command=lambda: gql.set(""),
+            **self._button_kw("ghost", height=_BTN_H),
         ).pack(side="left")
 
-        btns = ctk.CTkFrame(top, fg_color=_UI_SURFACE)
+        btns = ctk.CTkFrame(top, fg_color=self._pal["bg"])
         btns.pack(fill="x", padx=14, pady=(0, 12))
 
         def on_ok() -> None:
             old_lang = self._norm_lang_code(self._ui_language.get())
+            old_appearance = (self._appearance_mode.get() or "dark").strip().lower()
             m = (appearance.get() or "dark").strip().lower()
             if m not in ("dark", "light", "system"):
                 m = "dark"
@@ -3925,7 +4473,7 @@ class FileToolsApp(ctk.CTk):
             self._settings_dialog = None
             self._save_settings()
             self._log(self._tr("settings.saved_log"))
-            if new_lang != old_lang:
+            if new_lang != old_lang or m != old_appearance:
                 self._rebuild_main_ui()
 
         def on_cancel() -> None:
@@ -3935,17 +4483,19 @@ class FileToolsApp(ctk.CTk):
 
         cancel_t = self._tr("common.cancel")
         ok_t = self._tr("common.ok")
-        ctk.CTkButton(btns, text=cancel_t, width=_btn_w(cancel_t), height=_BTN_H, command=on_cancel).pack(
-            side="right", padx=(8, 0)
-        )
+        ctk.CTkButton(
+            btns,
+            text=cancel_t,
+            width=_btn_w(cancel_t),
+            command=on_cancel,
+            **self._button_kw("ghost", height=_BTN_H),
+        ).pack(side="right", padx=(8, 0))
         ctk.CTkButton(
             btns,
             text=ok_t,
             width=_btn_w(ok_t, lo=52),
-            height=_BTN_H,
-            fg_color=_BTN_ACCENT,
-            hover_color=_BTN_ACCENT_HOVER,
             command=on_ok,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
         ).pack(side="right")
 
         top.protocol("WM_DELETE_WINDOW", on_cancel)

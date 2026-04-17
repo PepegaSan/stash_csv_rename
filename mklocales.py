@@ -64,6 +64,34 @@ row(
     "ffprobe: {cur} / {total}",
     "ffprobe : {cur} / {total}",
 )
+row(
+    "common.work_background",
+    "Working in background — the window stays responsive.",
+    "Arbeitet im Hintergrund — das Fenster bleibt bedienbar.",
+    "Trabajando en segundo plano — la ventana sigue respondiendo.",
+    "Travail en arrière-plan — la fenêtre reste utilisable.",
+)
+row(
+    "log.busy_export",
+    "Tab 1: export already running — wait until it finishes.\n",
+    "Tab 1: Export läuft bereits — bitte warten.\n",
+    "Tab 1: exportación en curso — espere a que termine.\n",
+    "Tab 1 : export déjà en cours — patientez.\n",
+)
+row(
+    "log.busy_scan",
+    "Tab 2: scan already running — wait until it finishes.\n",
+    "Tab 2: Scan läuft bereits — bitte warten.\n",
+    "Tab 2: análisis en curso — espere a que termine.\n",
+    "Tab 2 : analyse déjà en cours — patientez.\n",
+)
+row(
+    "log.busy_probe",
+    "Tab 5: ffprobe batch already running — wait until it finishes.\n",
+    "Tab 5: ffprobe-Lauf aktiv — bitte warten.\n",
+    "Tab 5: ffprobe en curso — espere a que termine.\n",
+    "Tab 5 : ffprobe déjà en cours — patientez.\n",
+)
 row("common.save_log", "Save log to file…", "Protokoll speichern…", "Guardar registro en archivo…", "Enregistrer le journal…")
 row("common.clear_log", "Clear log", "Protokoll leeren", "Vaciar registro", "Vider le journal")
 row(
@@ -930,10 +958,10 @@ row(
 )
 row(
     "log.t5_probed",
-    "Tab 5: ffprobe OK for {ok} of {total} visible item(s); list refreshed.\n",
-    "Tab 5: ffprobe für {ok} von {total} sichtbaren Einträgen OK; Liste aktualisiert.\n",
-    "Tab 5: ffprobe OK en {ok} de {total} elementos visibles; lista actualizada.\n",
-    "Tab 5 : ffprobe OK pour {ok} sur {total} éléments visibles ; liste actualisée.\n",
+    "Tab 5: ffprobe OK for {ok} of {total} file path(s); list refreshed.\n",
+    "Tab 5: ffprobe für {ok} von {total} Dateipfad(en) OK; Liste aktualisiert.\n",
+    "Tab 5: ffprobe OK en {ok} de {total} ruta(s) de archivo; lista actualizada.\n",
+    "Tab 5 : ffprobe OK pour {ok} sur {total} chemin(s) fichier ; liste actualisée.\n",
 )
 row(
     "log.t5_probe_row_fail",

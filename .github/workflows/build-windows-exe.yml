@@ -23,7 +23,7 @@ jobs:
           python -m pip install -r requirements-build.txt
 
       - name: PyInstaller
-        run: python -m PyInstaller --noconfirm stashmarker.spec
+        run: python -m PyInstaller --noconfirm packaging/stashmarker_onefile.spec
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

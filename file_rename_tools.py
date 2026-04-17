@@ -10,6 +10,8 @@ import io
 import json
 import os
 import re
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 import shutil
 import subprocess
@@ -25,8 +27,8 @@ ProgressCallback = Callable[[int, int], None]
 
 # Dry-run can otherwise build hundreds of thousands of log strings (memory + frozen log UI).
 _DRY_RUN_LOG_LINE_CAP = 8_000
-from urllib.parse import unquote
-from urllib.request import Request, urlopen
+from urllib.parse import unquote, urlparse
+from urllib.request import Request, url2pathname, urlopen
 
 # Unicode lookalikes for ASCII COMMERCIAL AT (Stash/Excel sometimes differ from on-disk NTFS name).
 _COMMERCIAL_AT_EQUIV = (
@@ -1392,6 +1394,51 @@ def find_ffprobe_executable() -> Optional[str]:
     return shutil.which("ffprobe")
 
 
+def _media_path_for_ffprobe_argv(path_str: str) -> str:
+    """
+    Normalize paths for ffprobe subprocess argv.
+
+    - ``file:///…`` URLs → local path when possible.
+    - Windows ``\\\\?\\`` extended paths → conventional ``C:\\…`` / ``\\\\server\\…`` when the
+      file is still visible there (many ffmpeg/ffprobe builds mishandle extended prefixes).
+    """
+    s = (path_str or "").strip()
+    if not s:
+        return s
+    low = s.lower()
+    if low.startswith("file:"):
+        try:
+            tail = url2pathname(urlparse(s).path or "")
+            tail = tail.strip()
+            if tail and os.path.isfile(tail):
+                s = tail
+        except (ValueError, OSError, TypeError):
+            pass
+    if os.name != "nt":
+        return s
+    t = s.strip()
+    if not t.startswith("\\\\?\\"):
+        return t
+    upper = t.upper()
+    if upper.startswith("\\\\?\\UNC\\"):
+        rest = t[8:]
+        conv = "\\\\" + rest.lstrip("\\")
+        try:
+            if os.path.isfile(conv):
+                return conv
+        except (OSError, ValueError):
+            pass
+        return t
+    if len(t) >= 7 and t[5] == ":":
+        conv = t[4:]
+        try:
+            if os.path.isfile(conv):
+                return conv
+        except (OSError, ValueError):
+            pass
+    return t
+
+
 def ffprobe_video_size(
     path_str: str,
     *,
@@ -1407,6 +1454,7 @@ def ffprobe_video_size(
     raw = (path_str or "").strip()
     if not raw:
         return None, None, "empty path"
+    media = _media_path_for_ffprobe_argv(raw)
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
     try:
         proc = subprocess.run(
@@ -1420,7 +1468,7 @@ def ffprobe_video_size(
                 "stream=width,height",
                 "-of",
                 "json",
-                raw,
+                media,
             ],
             capture_output=True,
             text=True,
@@ -1450,6 +1498,66 @@ def ffprobe_video_size(
     if wi <= 0 or hi <= 0:
         return None, None, "invalid dimensions"
     return wi, hi, ""
+
+
+def ffprobe_paths_parallel(
+    paths: Sequence[str],
+    *,
+    ffprobe_exe: str,
+    max_workers: int = 8,
+    progress: Optional[ProgressCallback] = None,
+) -> tuple[dict[str, tuple[int, int]], list[tuple[str, str]]]:
+    """
+    Run ffprobe for distinct non-empty paths in parallel.
+
+    ``progress(done, total)`` may be called from worker threads (use ``widget.after`` to touch Tk).
+    Returns ``(path -> (width, height), [(path, err), ...])`` for failures.
+    """
+    uniq: list[str] = []
+    seen: set[str] = set()
+    for raw in paths:
+        p = (raw or "").strip()
+        if not p or p in seen:
+            continue
+        seen.add(p)
+        uniq.append(p)
+    total = len(uniq)
+    if total == 0:
+        return {}, []
+    results: dict[str, tuple[int, int]] = {}
+    fails: list[tuple[str, str]] = []
+    cpus = os.cpu_count() or 4
+    mw = max(1, min(total, max_workers, max(2, min(8, cpus + 2))))
+    lock = threading.Lock()
+    done = 0
+
+    def handle_one(p: str, w: Optional[int], h: Optional[int], err: str) -> None:
+        nonlocal done
+        with lock:
+            err_s = err if isinstance(err, str) else (str(err) if err is not None else "")
+            if w is not None and h is not None and w > 0 and h > 0:
+                results[p] = (int(w), int(h))
+            else:
+                fails.append((p, err_s or "ffprobe failed"))
+            done += 1
+            d, t = done, total
+            if progress and (d == 1 or d % 8 == 0 or d == t):
+                progress(d, t)
+
+    fut_to_path: dict = {}
+    with ThreadPoolExecutor(max_workers=mw) as ex:
+        for p in uniq:
+            fut = ex.submit(ffprobe_video_size, p, ffprobe_exe=ffprobe_exe)
+            fut_to_path[fut] = p
+        for fut in as_completed(fut_to_path):
+            p = fut_to_path[fut]
+            try:
+                w, h, err = fut.result()
+            except Exception as e:
+                handle_one(p, None, None, str(e))
+            else:
+                handle_one(p, w, h, err)
+    return results, fails
 
 
 def format_resolution_tag(width: int, height: int, mode: str) -> str:

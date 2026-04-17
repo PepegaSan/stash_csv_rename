@@ -50,5 +50,5 @@ Desktop.ini
 *.tmp
 *.bak
 
-# PyInstaller / packaging (if you add later)
+# PyInstaller / packaging
 *.spec.bak

@@ -8,24 +8,33 @@ Small helper around **[Stash](https://github.com/stashapp/stash)**: export file 
 
 **Important — keep the database in sync:** If you rename or move files **outside** Stash (e.g. with this tool), paths stored in Stash no longer match the disk. Run **Tasks → Scan** (library scan) in Stash afterward so entries match the files again. Do **not** run **Clean** before Scan if you want to keep your media.
 
+## Screenshot
+
+![Stashmarker — file tools (main window)](UI.png)
+
+Sidebar navigation, status line, and **⚙ Settings** (language, theme, CSV separator, Stash URL / API / GraphQL). Appearance depends on your saved settings.
+
 ## Quick start
 
-- **Python 3** and **PowerShell** (Windows)
-- **Install dependencies (Windows):** run **`install.bat`**, or manually: `pip install -r requirements.txt`
-- **Optional for Tab 5 resolution:** `ffprobe` must be installed and available in `PATH` (typically from ffmpeg builds)
-- Launch: **`start_file_tools.bat`** or `python gui_file_tools.py`
+### Run from source (Python on Windows)
 
-### Windows portable executable (.exe)
+- **Python 3** and **PowerShell** (Windows).
+- **Install runtime dependencies:** run **`install.bat`** in the repository root. It upgrades `pip`, then installs **`requirements.txt`** (e.g. CustomTkinter). It does **not** install PyInstaller or other build-only tools.
+- Alternatively: `python -m pip install -r requirements.txt`
+- **Start the app:** **`start_file_tools.bat`** (runs `python gui_file_tools.py` from this folder) or run `python gui_file_tools.py` yourself after installing dependencies.
+- **Optional for Tab 5 resolution:** install **FFmpeg** and ensure **`ffprobe`** is on **`PATH`**.
 
-There is **no guaranteed pre-built binary in this repo** (GitHub Releases are optional). To build **`Stashmarker.exe`** yourself on Windows:
+### Build the Windows `.exe` (optional)
 
-1. Install **Python 3.10+** and ensure `python` is on `PATH`.
-2. Run **`build_exe.bat`** in the repository root. It installs dependencies, runs **PyInstaller** using **`stashmarker.spec`**, and writes **`dist\Stashmarker.exe`**.
-3. Copy **`Stashmarker.exe`** wherever you like. On first run it creates **`gui_file_tools_settings.json`**, **`schema_rename_presets.json`**, and **`file_tools_csv\`** **next to the .exe** (same as the script-based install).
+There is **no guaranteed pre-built binary in this repo** (GitHub Releases are optional). To build **`Stashmarker.exe`** yourself:
 
-Maintainers can also use **Actions → “Build Windows exe”** (workflow dispatch) to produce a downloadable **artifact** without a local PyInstaller install.
+1. Install **Python 3.10+** and ensure **`python`** is on **`PATH`**.
+2. Run **`build_exe.bat`** in the repository root. It installs **`requirements.txt`** and **`requirements-build.txt`**, then runs **PyInstaller** with **`packaging\stashmarker_onefile.spec`** and writes **`dist\Stashmarker.exe`** (one-file bundle, **no console window** — windowed GUI only).
+3. Copy **`Stashmarker.exe`** wherever you like. On first run it creates **`gui_file_tools_settings.json`**, **`schema_rename_presets.json`**, and **`file_tools_csv\`** next to the `.exe` (same behaviour as running from source, where those files are created next to the script or project folder depending on how you launch).
 
-**UI (current state):** slimmer and optimized for daily use. Redundant button rows were removed (Explorer stays in the right-click menu), Tab 5 tag slots use placeholders instead of extra labels, and the ffprobe action sits directly next to the resolution options.
+Maintainers can use **Actions → “Build Windows exe”** (workflow dispatch) to produce a downloadable **artifact** without a local PyInstaller install.
+
+**UI notes:** List filters are debounced while typing; Tab 3–5 support click-drag (including edge auto-scroll) for contiguous row selection. Tab 5 uses compact tag slots and ffprobe next to resolution options; Explorer stays in the right-click menu on lists.
 
 **Tab 2:** Scan a folder on disk (no Stash), same CSV shape as Tab 1.  
 **Tab 3:** Load CSV, search + exclude filters, edit **new file name**, optional dry run, then rename on disk.  
@@ -95,11 +104,13 @@ All `*.csv` files anywhere in the tree are ignored so path lists are harder to c
 | `file_rename_tools.py` | CSV & rename logic |
 | `export_stash_files.ps1` | Export Stash → CSV |
 | `apply_stash_file_renames.ps1` | Rename from CSV (CLI) |
-| `install.bat` | Install / upgrade `pip` and dependencies |
-| `start_file_tools.bat` | Windows launcher |
-| `build_exe.bat` | Build `dist\Stashmarker.exe` (PyInstaller) |
-| `stashmarker.spec` | PyInstaller bundle definition (locales, themes, `export_stash_files.ps1`) |
-| `requirements-build.txt` | Extra deps to build the `.exe` (PyInstaller) |
+| `requirements.txt` | Runtime Python deps (CustomTkinter, etc.) — used by **`install.bat`** and **`build_exe.bat`** |
+| `install.bat` | Upgrade `pip`, install **`requirements.txt`** only (runtime / GUI) |
+| `start_file_tools.bat` | Windows launcher: `python gui_file_tools.py` from repo root |
+| `build_exe.bat` | Install **`requirements.txt`** + **`requirements-build.txt`**, then build **`dist\Stashmarker.exe`** |
+| `packaging/stashmarker_onefile.spec` | PyInstaller one-file spec (locales, themes, CustomTkinter assets, `export_stash_files.ps1`) |
+| `requirements-build.txt` | Build-only deps (PyInstaller) — used by **`build_exe.bat`**, not by **`install.bat`** |
+| `UI.png` | Screenshot for this README |
 
 Generated locally (not committed): `file_tools_csv/`, `gui_file_tools_settings.json`, `schema_rename_presets.json`, `build/`, `dist/` — see `.gitignore`.
 
