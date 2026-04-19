@@ -27,12 +27,15 @@ from file_rename_tools import (
     build_schema_rename_leaf,
     compose_ui_list_filter,
     merge_extra_bracket_tags_into_leaf,
+    merge_schema_metadata_into_append_leaf,
+    strip_non_auto_bracket_tags_from_leaf,
     ffprobe_paths_parallel,
     ffprobe_video_size,
     filter_stub_for_subfolder_suggest,
     find_ffprobe_executable,
     move_files_only,
     read_rename_csv,
+    rehydrate_leaf_stem_head_from_schema_row,
     row_passes_list_filters,
     rename_folder_dangerous,
     resolve_csv_path_to_existing_file,
@@ -211,10 +214,9 @@ class FileToolsApp(ctk.CTk):
         self._t5_include_year = ctk.BooleanVar(value=True)
         self._t5_include_resolution = ctk.BooleanVar(value=True)
         self._t5_include_rating = ctk.BooleanVar(value=True)
-        self._t5_resolution_mode = ctk.StringVar(value="heightp")
         self._t5_dry = ctk.BooleanVar(value=True)
         self._t5_use_selected = ctk.BooleanVar(value=False)
-        self._t5_append_tags_only = ctk.BooleanVar(value=False)
+        self._t5_name_mode = ctk.StringVar(value="full_schema")
         self._t5_preserve_tags_on_shorten = ctk.BooleanVar(value=False)
         self._t5_title_max_entry: ctk.CTkEntry | None = None
         self._t5_full_schema_only_widgets: list[object] = []
@@ -238,14 +240,18 @@ class FileToolsApp(ctk.CTk):
         self._appearance_mode = ctk.StringVar(value="dark")
         self._ui_language = ctk.StringVar(value="en")
         self._settings_dialog: ctk.CTkToplevel | None = None
+        self._t5_help_dialog: ctk.CTkToplevel | None = None
         self._work_status = ctk.StringVar(value="")
         self._t1_export_busy = False
         self._t2_scan_busy = False
         self._btn_t1_export: ctk.CTkButton | None = None
         self._btn_t2_scan: ctk.CTkButton | None = None
         self._btn_t5_probe: ctk.CTkButton | None = None
+        self._log_collapsed = ctk.BooleanVar(value=False)
+        self._log_toggle_btn: ctk.CTkButton | None = None
 
         self._load_settings()
+        self._ensure_bundled_export_ps1_path()
         self._sync_palette_from_appearance()
         self._translator = Translator(_RES_DIR / "locales", self._norm_lang_code(self._ui_language.get()))
         self.title(self._tr("app.window_title"))
@@ -332,15 +338,15 @@ class FileToolsApp(ctk.CTk):
         self._t5_include_year = ctk.BooleanVar(value=self._t5_include_year.get())
         self._t5_include_resolution = ctk.BooleanVar(value=self._t5_include_resolution.get())
         self._t5_include_rating = ctk.BooleanVar(value=self._t5_include_rating.get())
-        self._t5_resolution_mode = ctk.StringVar(value=self._t5_resolution_mode.get())
         self._t5_dry = ctk.BooleanVar(value=self._t5_dry.get())
         self._t5_use_selected = ctk.BooleanVar(value=self._t5_use_selected.get())
-        self._t5_append_tags_only = ctk.BooleanVar(value=self._t5_append_tags_only.get())
+        self._t5_name_mode = ctk.StringVar(value=self._t5_name_mode.get())
         self._t5_preserve_tags_on_shorten = ctk.BooleanVar(value=self._t5_preserve_tags_on_shorten.get())
         self._t5_tag_en = [ctk.BooleanVar(value=self._t5_tag_en[i].get()) for i in range(5)]
         self._t5_tag_txt = [ctk.StringVar(value=self._t5_tag_txt[i].get()) for i in range(5)]
         self._t5_preset_name = ctk.StringVar(value=self._t5_preset_name.get())
         self._t5_preset_pick = ctk.StringVar(value=self._t5_preset_pick.get())
+        self._log_collapsed = ctk.BooleanVar(value=self._log_collapsed.get())
 
     def _remove_t4_traces(self) -> None:
         for v, tid in self._t4_trace_ids:
@@ -382,17 +388,31 @@ class FileToolsApp(ctk.CTk):
         """``title_only`` = shorten head before trailing ``[…]``; ``full_stem`` = cap whole stem."""
         return "title_only" if self._t5_preserve_tags_on_shorten.get() else "full_stem"
 
-    def _t5_on_append_tags_only_change(self, *_a: object) -> None:
+    def _t5_name_mode_effective(self) -> str:
+        m = (self._t5_name_mode.get() or "full_schema").strip().lower()
+        if m == "tags_overwrite":
+            return "tags_replace_except_auto"
+        if m in ("tags_append", "tags_replace_except_auto"):
+            return m
+        return "full_schema"
+
+    def _t5_in_tags_mode(self) -> bool:
+        return self._t5_name_mode_effective() in ("tags_append", "tags_replace_except_auto")
+
+    def _t5_tags_replace_except_auto(self) -> bool:
+        """Replace non-auto ``[…]`` + slot tags; keep year / resolution / rating literals from the file."""
+        return self._t5_name_mode_effective() == "tags_replace_except_auto"
+
+    def _t5_on_name_mode_change(self, *_a: object) -> None:
         self._t5_apply_mode_dependent_ui_state()
         self._t5_on_schema_preview_change()
 
     def _t5_apply_mode_dependent_ui_state(self) -> None:
-        full = not bool(self._t5_append_tags_only.get())
-
+        """Reserved for widgets that should depend on name mode (currently none)."""
         for w in self._t5_full_schema_only_widgets:
             try:
                 if int(w.winfo_exists()):
-                    w.configure(state="normal" if full else "disabled")
+                    w.configure(state="normal")
             except TclError:
                 pass
 
@@ -447,7 +467,7 @@ class FileToolsApp(ctk.CTk):
             self._t5_trace_ids.append((v, v.trace_add("write", cb_filter)))
         self._t5_trace_ids.append((self._t5_title_max, self._t5_title_max.trace_add("write", cb_tag_text)))
         self._t5_trace_ids.append(
-            (self._t5_append_tags_only, self._t5_append_tags_only.trace_add("write", self._t5_on_append_tags_only_change)),
+            (self._t5_name_mode, self._t5_name_mode.trace_add("write", self._t5_on_name_mode_change)),
         )
         self._t5_trace_ids.append(
             (self._t5_preserve_tags_on_shorten, self._t5_preserve_tags_on_shorten.trace_add("write", cb_schema_leaf)),
@@ -456,7 +476,6 @@ class FileToolsApp(ctk.CTk):
             self._t5_include_year,
             self._t5_include_resolution,
             self._t5_include_rating,
-            self._t5_resolution_mode,
         ):
             self._t5_trace_ids.append((v, v.trace_add("write", cb_schema_leaf)))
 
@@ -514,6 +533,8 @@ class FileToolsApp(ctk.CTk):
         self._remove_t4_traces()
         self._remove_t5_traces()
         self._cancel_t4_preview_after()
+        self._settings_dialog = None
+        self._t5_help_dialog = None
         try:
             self.update_idletasks()
         except TclError:
@@ -1036,6 +1057,35 @@ class FileToolsApp(ctk.CTk):
         self._log_box.delete("1.0", "end")
         self._log_box.configure(state="disabled")
 
+    def _sync_log_toggle_btn(self) -> None:
+        b = self._log_toggle_btn
+        if b is None or not int(b.winfo_exists()):
+            return
+        b.configure(
+            text=self._tr("common.log_expand") if self._log_collapsed.get() else self._tr("common.log_collapse")
+        )
+
+    def _apply_log_panel_collapsed(self) -> None:
+        if not hasattr(self, "_log_f"):
+            return
+        self._sync_log_toggle_btn()
+        if self._log_collapsed.get():
+            try:
+                self._log_box.grid_remove()
+            except TclError:
+                pass
+            self._log_f.grid_rowconfigure(1, weight=0, minsize=0)
+            self.grid_rowconfigure(3, weight=0, minsize=0)
+        else:
+            self._log_box.grid(row=1, column=0, sticky="nsew")
+            self._log_f.grid_rowconfigure(1, weight=1)
+            self.grid_rowconfigure(3, weight=1)
+
+    def _toggle_log_panel(self) -> None:
+        self._log_collapsed.set(not self._log_collapsed.get())
+        self._apply_log_panel_collapsed()
+        self._save_settings()
+
     def _sync_header_undo_button(self) -> None:
         ok = bool(self._rename_undo_stack and len(self._rename_undo_stack[1]) > 0)
         b = self._header_undo_btn
@@ -1236,15 +1286,25 @@ class FileToolsApp(ctk.CTk):
             **self._button_kw("success", height=42),
         ).pack(side="left", padx=12, pady=12)
 
-        log_f = ctk.CTkFrame(self, fg_color=p["bg"])
-        log_f.grid(row=3, column=0, sticky="nsew", padx=14, pady=(0, 12))
-        log_f.grid_rowconfigure(1, weight=1)
-        log_f.grid_columnconfigure(0, weight=1)
-        log_top = ctk.CTkFrame(log_f, fg_color=p["panel"], corner_radius=8, border_width=1, border_color=p["border"])
+        self._log_f = ctk.CTkFrame(self, fg_color=p["bg"])
+        self._log_f.grid(row=3, column=0, sticky="nsew", padx=14, pady=(0, 12))
+        self._log_f.grid_rowconfigure(1, weight=1)
+        self._log_f.grid_columnconfigure(0, weight=1)
+        log_top = ctk.CTkFrame(
+            self._log_f, fg_color=p["panel"], corner_radius=8, border_width=1, border_color=p["border"]
+        )
         log_top.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         self._label(log_top, text=self._tr("common.log"), anchor="w", fg_color="transparent").pack(
             side="left", padx=10, pady=6
         )
+        self._log_toggle_btn = ctk.CTkButton(
+            log_top,
+            text=self._tr("common.log_collapse"),
+            width=max(96, _btn_w(self._tr("common.log_collapse"))),
+            command=self._toggle_log_panel,
+            **self._button_kw("ghost", height=_BTN_H),
+        )
+        self._log_toggle_btn.pack(side="left", padx=(0, 8), pady=6)
         ctk.CTkButton(
             log_top,
             text=self._tr("common.save_log"),
@@ -1260,7 +1320,7 @@ class FileToolsApp(ctk.CTk):
             **self._button_kw("ghost", height=_BTN_H),
         ).pack(side="right", pady=6)
         self._log_box = ctk.CTkTextbox(
-            log_f,
+            self._log_f,
             height=200,
             activate_scrollbars=True,
             font=("Consolas", 12),
@@ -1270,6 +1330,7 @@ class FileToolsApp(ctk.CTk):
         )
         self._log_box.grid(row=1, column=0, sticky="nsew")
         self._log_box.configure(state="disabled")
+        self._apply_log_panel_collapsed()
         self._sync_header_undo_button()
 
     def _pad(self) -> dict:
@@ -1847,19 +1908,23 @@ class FileToolsApp(ctk.CTk):
 
         self._tree = ttk.Treeview(
             tree_frame,
-            columns=("path", "name", "new_leaf"),
+            columns=("path", "path_gap", "name", "name_gap", "new_leaf"),
             show="headings",
             height=14,
             selectmode="extended",
         )
         self._tree.heading("path", text=self._tr("t3.col.path"), command=lambda: self._toggle_sort_t3("path"))
+        self._tree.heading("path_gap", text=self._tr("t3.col.path_gap"))
         self._tree.heading("name", text=self._tr("t3.col.name"), command=lambda: self._toggle_sort_t3("name"))
+        self._tree.heading("name_gap", text=self._tr("t3.col.path_gap"))
         self._tree.heading(
             "new_leaf", text=self._tr("t3.col.new_leaf"), command=lambda: self._toggle_sort_t3("new_leaf")
         )
-        self._tree.column("path", width=420, minwidth=80, stretch=False)
-        self._tree.column("name", width=160, minwidth=60, stretch=False)
-        self._tree.column("new_leaf", width=220, minwidth=60, stretch=False)
+        self._tree.column("path", width=300, minwidth=80, stretch=False, anchor="w")
+        self._tree.column("path_gap", width=16, minwidth=12, stretch=False, anchor="center")
+        self._tree.column("name", width=240, minwidth=70, stretch=False, anchor="w")
+        self._tree.column("name_gap", width=16, minwidth=12, stretch=False, anchor="center")
+        self._tree.column("new_leaf", width=300, minwidth=80, stretch=False, anchor="w")
         self._place_ttk_tree_with_scrollbars(tree_frame, self._tree)
         self._tree.bind("<<TreeviewSelect>>", self._t3_on_select)
         self._tree.bind("<Double-1>", lambda e: self._t3_focus_edit_leaf())
@@ -2004,19 +2069,23 @@ class FileToolsApp(ctk.CTk):
         self._apply_ttk_treeview_style()
         self._t4_tree = ttk.Treeview(
             tree_frame,
-            columns=("path", "name", "scene_id"),
+            columns=("path", "path_gap", "name", "name_gap", "scene_id"),
             show="headings",
             height=10,
             selectmode="extended",
         )
         self._t4_tree.heading("path", text=self._tr("t3.col.path"), command=lambda: self._toggle_sort_t4("path"))
+        self._t4_tree.heading("path_gap", text=self._tr("t3.col.path_gap"))
         self._t4_tree.heading("name", text=self._tr("t3.col.name"), command=lambda: self._toggle_sort_t4("name"))
+        self._t4_tree.heading("name_gap", text=self._tr("t3.col.path_gap"))
         self._t4_tree.heading(
             "scene_id", text=self._tr("t4.col.scene_id"), command=lambda: self._toggle_sort_t4("scene_id")
         )
-        self._t4_tree.column("path", width=420, minwidth=80, stretch=False)
-        self._t4_tree.column("name", width=180, minwidth=80, stretch=False)
-        self._t4_tree.column("scene_id", width=120, minwidth=60, stretch=False)
+        self._t4_tree.column("path", width=360, minwidth=80, stretch=False, anchor="w")
+        self._t4_tree.column("path_gap", width=16, minwidth=12, stretch=False, anchor="center")
+        self._t4_tree.column("name", width=200, minwidth=80, stretch=False, anchor="w")
+        self._t4_tree.column("name_gap", width=16, minwidth=12, stretch=False, anchor="center")
+        self._t4_tree.column("scene_id", width=120, minwidth=60, stretch=False, anchor="w")
         self._place_ttk_tree_with_scrollbars(tree_frame, self._t4_tree)
         self._t4_tree.bind("<Button-3>", self._t4_tree_context_menu)
 
@@ -2202,28 +2271,35 @@ class FileToolsApp(ctk.CTk):
             border_width=1,
             border_color=self._pal["border"],
         )
-        tree_outer5.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+        tree_outer5.pack(fill="x", expand=False, padx=10, pady=(0, 2))
         tree_frame = ctk.CTkFrame(tree_outer5, fg_color=self._pal["panel"])
-        tree_frame.pack(fill="both", expand=True, padx=3, pady=3)
+        tree_frame.pack(fill="x", expand=False, padx=3, pady=3)
         self._apply_ttk_treeview_style()
         self._t5_tree = ttk.Treeview(
             tree_frame,
             columns=(
                 "path",
+                "path_gap",
                 "file_name",
+                "name_gap",
+                "proposed",
                 "scene_title",
                 "scene_tags",
                 "scene_markers",
                 "scene_date",
-                "proposed",
             ),
             show="headings",
             height=11,
             selectmode="extended",
         )
         self._t5_tree.heading("path", text=self._tr("t3.col.path"), command=lambda: self._toggle_sort_t5("path"))
+        self._t5_tree.heading("path_gap", text=self._tr("t3.col.path_gap"))
         self._t5_tree.heading(
             "file_name", text=self._tr("t3.col.name"), command=lambda: self._toggle_sort_t5("file_name")
+        )
+        self._t5_tree.heading("name_gap", text=self._tr("t3.col.path_gap"))
+        self._t5_tree.heading(
+            "proposed", text=self._tr("t5.col.proposed"), command=lambda: self._toggle_sort_t5("proposed")
         )
         self._t5_tree.heading(
             "scene_title", text=self._tr("t5.col.scene_title"), command=lambda: self._toggle_sort_t5("scene_title")
@@ -2239,24 +2315,77 @@ class FileToolsApp(ctk.CTk):
         self._t5_tree.heading(
             "scene_date", text=self._tr("t5.col.scene_date"), command=lambda: self._toggle_sort_t5("scene_date")
         )
-        self._t5_tree.heading(
-            "proposed", text=self._tr("t5.col.proposed"), command=lambda: self._toggle_sort_t5("proposed")
-        )
-        self._t5_tree.column("path", width=200, minwidth=60, stretch=False)
-        self._t5_tree.column("file_name", width=100, minwidth=50, stretch=False)
-        self._t5_tree.column("scene_title", width=120, minwidth=50, stretch=False)
-        self._t5_tree.column("scene_tags", width=110, minwidth=50, stretch=False)
-        self._t5_tree.column("scene_markers", width=110, minwidth=50, stretch=False)
-        self._t5_tree.column("scene_date", width=72, minwidth=50, stretch=False)
-        self._t5_tree.column("proposed", width=200, minwidth=80, stretch=False)
+        self._t5_tree.column("path", width=160, minwidth=60, stretch=False, anchor="w")
+        self._t5_tree.column("path_gap", width=16, minwidth=12, stretch=False, anchor="center")
+        self._t5_tree.column("file_name", width=260, minwidth=70, stretch=False, anchor="w")
+        self._t5_tree.column("name_gap", width=16, minwidth=12, stretch=False, anchor="center")
+        self._t5_tree.column("proposed", width=300, minwidth=100, stretch=False, anchor="w")
+        self._t5_tree.column("scene_title", width=88, minwidth=44, stretch=False, anchor="w")
+        self._t5_tree.column("scene_tags", width=80, minwidth=44, stretch=False, anchor="w")
+        self._t5_tree.column("scene_markers", width=80, minwidth=44, stretch=False, anchor="w")
+        self._t5_tree.column("scene_date", width=64, minwidth=44, stretch=False, anchor="w")
         self._place_ttk_tree_with_scrollbars(tree_frame, self._t5_tree)
+        # Do not stretch the tree vertically inside the frame (avoids a tall empty band under Tab 5).
+        tree_frame.grid_rowconfigure(0, weight=0)
         self._t5_tree.bind("<Button-3>", self._t5_tree_context_menu)
 
         self._t5_full_schema_only_widgets = []
         self._t5_title_max_entry = None
 
+        t5_help_row = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
+        t5_help_row.pack(fill="x", padx=10, pady=(0, 2), anchor="w")
+        ctk.CTkButton(
+            t5_help_row,
+            text="\u2139",
+            command=self._open_t5_schema_help_dialog,
+            **self._button_kw("ghost", height=28, width=36, font=("Segoe UI Semibold", 15)),
+        ).pack(side="left", anchor="w")
+
+        title_fr = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
+        title_fr.pack(fill="x", padx=10, pady=(0, 2))
+        title_top = ctk.CTkFrame(title_fr, fg_color=self._pal["panel"])
+        title_top.pack(fill="x")
+        self._label(title_top, text=self._tr("t5.title_max"), width=160, anchor="w").pack(side="left", padx=(0, 6))
+        self._t5_title_max_entry = ctk.CTkEntry(title_top, textvariable=self._t5_title_max, width=56)
+        self._t5_title_max_entry.pack(side="left", padx=(0, 12))
+
+        schema_mode_fr = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
+        schema_mode_fr.pack(fill="x", padx=10, pady=(0, 0))
+        schema_mode_row = ctk.CTkFrame(schema_mode_fr, fg_color=self._pal["panel"])
+        schema_mode_row.pack(fill="x")
+        ctk.CTkRadioButton(
+            schema_mode_row,
+            text=self._tr("t5.name_mode.full_schema"),
+            variable=self._t5_name_mode,
+            value="full_schema",
+            **self._radio_kw(),
+        ).pack(side="left", padx=(0, 14))
+        ctk.CTkCheckBox(
+            schema_mode_row,
+            text=self._tr("t5.preserve_tags_on_shorten"),
+            variable=self._t5_preserve_tags_on_shorten,
+            **self._checkbox_kw(),
+        ).pack(side="left", padx=(0, 8))
+
+        append_fr = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
+        append_fr.pack(fill="x", padx=10, pady=(0, 2))
+        ctk.CTkRadioButton(
+            append_fr,
+            text=self._tr("t5.name_mode.tags_append"),
+            variable=self._t5_name_mode,
+            value="tags_append",
+            **self._radio_kw(),
+        ).pack(side="left", padx=(0, 14))
+        ctk.CTkRadioButton(
+            append_fr,
+            text=self._tr("t5.name_mode.tags_replace_except_auto"),
+            variable=self._t5_name_mode,
+            value="tags_replace_except_auto",
+            **self._radio_kw(),
+        ).pack(side="left", anchor="w")
+
         inc_fr = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
-        inc_fr.pack(fill="x", padx=10, pady=(4, 2))
+        inc_fr.pack(fill="x", padx=10, pady=(0, 2))
         self._label(
             inc_fr,
             text=self._tr("t5.from_csv_label"),
@@ -2265,107 +2394,29 @@ class FileToolsApp(ctk.CTk):
         ).pack(fill="x", anchor="w", pady=(0, 2))
         inc_row = ctk.CTkFrame(inc_fr, fg_color=self._pal["panel"])
         inc_row.pack(fill="x")
-        cb_y = ctk.CTkCheckBox(
+        ctk.CTkCheckBox(
             inc_row, text=self._tr("t5.include_year"), variable=self._t5_include_year, **self._checkbox_kw()
-        )
-        cb_y.pack(side="left", padx=(0, 12))
-        self._t5_full_schema_only_widgets.append(cb_y)
-        cb_res = ctk.CTkCheckBox(
+        ).pack(side="left", padx=(0, 12))
+        ctk.CTkCheckBox(
             inc_row,
             text=self._tr("t5.include_resolution"),
             variable=self._t5_include_resolution,
             **self._checkbox_kw(),
-        )
-        cb_res.pack(side="left", padx=(0, 12))
-        self._t5_full_schema_only_widgets.append(cb_res)
-        cb_rt = ctk.CTkCheckBox(
-            inc_row, text=self._tr("t5.include_rating"), variable=self._t5_include_rating, **self._checkbox_kw()
-        )
-        cb_rt.pack(side="left", padx=(0, 12))
-        self._t5_full_schema_only_widgets.append(cb_rt)
-
-        title_fr = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
-        title_fr.pack(fill="x", padx=10, pady=(2, 0))
-        title_top = ctk.CTkFrame(title_fr, fg_color=self._pal["panel"])
-        title_top.pack(fill="x")
-        self._label(title_top, text=self._tr("t5.title_max"), width=160, anchor="w").pack(side="left", padx=(0, 6))
-        self._t5_title_max_entry = ctk.CTkEntry(title_top, textvariable=self._t5_title_max, width=56)
-        self._t5_title_max_entry.pack(side="left", padx=(0, 12))
+        ).pack(side="left", padx=(0, 12))
         ctk.CTkCheckBox(
-            title_top,
-            text=self._tr("t5.preserve_tags_on_shorten"),
-            variable=self._t5_preserve_tags_on_shorten,
-            **self._checkbox_kw(),
-        ).pack(side="left", padx=(0, 8))
-        self._label(
-            title_fr,
-            text=self._tr("t5.preserve_tags_hint"),
-            anchor="w",
-            justify="left",
-            wraplength=880,
-            text_color=self._pal["muted"],
-            font=FONT_HINT,
-        ).pack(fill="x", anchor="w", pady=(2, 0))
+            inc_row, text=self._tr("t5.include_rating"), variable=self._t5_include_rating, **self._checkbox_kw()
+        ).pack(side="left", padx=(0, 12))
 
-        rr = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=32)
-        rr.pack_propagate(False)
-        rr.pack(fill="x", padx=10, pady=(0, 2))
-        self._label(rr, text=self._tr("t5.resolution_mode"), width=200, anchor="w").pack(side="left")
-        rb_hp = ctk.CTkRadioButton(
-            rr,
-            text=self._tr("t5.res_heightp"),
-            variable=self._t5_resolution_mode,
-            value="heightp",
-            **self._radio_kw(),
-        )
-        rb_hp.pack(side="left", padx=(0, 12))
-        self._t5_full_schema_only_widgets.append(rb_hp)
-        rb_wh = ctk.CTkRadioButton(
-            rr,
-            text=self._tr("t5.res_wxh"),
-            variable=self._t5_resolution_mode,
-            value="wxh",
-            **self._radio_kw(),
-        )
-        rb_wh.pack(side="left", padx=(0, 12))
-        self._t5_full_schema_only_widgets.append(rb_wh)
+        probe_fr = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
+        probe_fr.pack(fill="x", padx=10, pady=(0, 2))
         self._btn_t5_probe = ctk.CTkButton(
-            rr,
+            probe_fr,
             text=self._tr("t5.refresh_probe"),
             width=_btn_w(self._tr("t5.refresh_probe")),
             command=self._t5_refresh_probe,
             **self._button_kw("primary_emphasis", height=_BTN_H),
         )
-        self._btn_t5_probe.pack(side="left")
-        self._t5_full_schema_only_widgets.append(self._btn_t5_probe)
-
-        self._label(
-            parent,
-            text=self._tr("t5.tag_structure_hint"),
-            anchor="w",
-            justify="left",
-            wraplength=880,
-            text_color=self._pal["muted"],
-            font=FONT_HINT,
-        ).pack(fill="x", padx=10, pady=(0, 2))
-
-        append_fr = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
-        append_fr.pack(fill="x", padx=10, pady=(0, 2))
-        ctk.CTkCheckBox(
-            append_fr,
-            text=self._tr("t5.append_tags_only"),
-            variable=self._t5_append_tags_only,
-            **self._checkbox_kw(),
-        ).pack(side="left", anchor="w")
-        self._label(
-            parent,
-            text=self._tr("t5.append_tags_hint_short"),
-            anchor="w",
-            justify="left",
-            wraplength=880,
-            text_color=self._pal["muted"],
-            font=FONT_HINT,
-        ).pack(fill="x", padx=10, pady=(0, 4))
+        self._btn_t5_probe.pack(side="left", padx=(0, 10))
 
         for i in range(5):
             tag_row = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=30)
@@ -2495,10 +2546,9 @@ class FileToolsApp(ctk.CTk):
             "include_year": bool(self._t5_include_year.get()),
             "include_resolution": bool(self._t5_include_resolution.get()),
             "include_rating": bool(self._t5_include_rating.get()),
-            "resolution_mode": (self._t5_resolution_mode.get() or "heightp").strip(),
             "tag_enabled": [bool(self._t5_tag_en[i].get()) for i in range(5)],
             "tag_text": [self._t5_tag_txt[i].get() for i in range(5)],
-            "append_tags_only": bool(self._t5_append_tags_only.get()),
+            "name_mode": self._t5_name_mode_effective(),
             "preserve_tags_on_shorten": bool(self._t5_preserve_tags_on_shorten.get()),
         }
 
@@ -2514,8 +2564,6 @@ class FileToolsApp(ctk.CTk):
         self._t5_include_year.set(bool(d.get("include_year", True)))
         self._t5_include_resolution.set(bool(d.get("include_resolution", True)))
         self._t5_include_rating.set(bool(d.get("include_rating", True)))
-        rm = str(d.get("resolution_mode") or "heightp").strip().lower()
-        self._t5_resolution_mode.set(rm if rm in ("heightp", "wxh") else "heightp")
         te = d.get("tag_enabled")
         if isinstance(te, list):
             for i in range(5):
@@ -2526,21 +2574,25 @@ class FileToolsApp(ctk.CTk):
             for i in range(5):
                 if i < len(tt):
                     self._t5_tag_txt[i].set(str(tt[i] or ""))
-        ato = d.get("append_tags_only")
-        if isinstance(ato, bool):
-            self._t5_append_tags_only.set(ato)
-        else:
-            nm = d.get("name_mode")
-            if isinstance(nm, str):
-                nmx = nm.strip().lower()
-                if nmx in ("tags_append", "tags_append_shorten"):
-                    self._t5_append_tags_only.set(True)
-                elif nmx == "full_schema":
-                    self._t5_append_tags_only.set(False)
-            elif bool(d.get("tags_shorten_title", False)):
-                self._t5_append_tags_only.set(True)
+        nm = d.get("name_mode")
+        if isinstance(nm, str):
+            nmx = nm.strip().lower()
+            if nmx in ("tags_replace_except_auto", "tags_overwrite"):
+                self._t5_name_mode.set("tags_replace_except_auto")
+            elif nmx in ("tags_append", "tags_append_shorten"):
+                self._t5_name_mode.set("tags_append")
+            elif nmx == "full_schema":
+                self._t5_name_mode.set("full_schema")
             else:
-                self._t5_append_tags_only.set(False)
+                self._t5_name_mode.set("full_schema")
+        else:
+            ato = d.get("append_tags_only")
+            if isinstance(ato, bool) and ato:
+                self._t5_name_mode.set("tags_append")
+            elif bool(d.get("tags_shorten_title", False)):
+                self._t5_name_mode.set("tags_append")
+            else:
+                self._t5_name_mode.set("full_schema")
         pv = d.get("preserve_tags_on_shorten")
         if isinstance(pv, bool):
             self._t5_preserve_tags_on_shorten.set(pv)
@@ -2675,7 +2727,7 @@ class FileToolsApp(ctk.CTk):
             "include_year": self._t5_include_year.get(),
             "include_resolution": self._t5_include_resolution.get(),
             "include_rating": self._t5_include_rating.get(),
-            "resolution_mode": self._t5_resolution_mode.get(),
+            "resolution_mode": "heightp",
         }
 
     @staticmethod
@@ -2753,9 +2805,9 @@ class FileToolsApp(ctk.CTk):
     def _t5_prior_leaf_for_merge(self, row: dict[str, str]) -> str:
         """
         Source leaf for ``merge_extra_bracket_tags_into_leaf``. Prefer ``new_leaf`` after Fill.
-        With **append-tags-only** preview, derive from ``file_name`` + slot options. With full
-        schema and **protect tags** on, use ``file_name`` so existing ``[…]`` are visible to merge
-        even when no slot changed the name yet.
+        In **Add tags** / **Overwrite tags** mode, derive from ``file_name`` + slots + CSV metadata
+        (same pipeline as the proposed name). With full schema and **protect tags** on, use
+        ``file_name`` so existing ``[…]`` are visible to merge even when no slot changed the name yet.
         """
         nl = (row.get("new_leaf") or "").strip()
         if nl:
@@ -2763,21 +2815,38 @@ class FileToolsApp(ctk.CTk):
         fn = (row.get("file_name") or "").strip()
         if not fn:
             return ""
-        if self._t5_append_tags_only.get():
+        if self._t5_in_tags_mode():
             opts = self._t5_schema_options_kwargs()
-            if self._t5_shorten_scope_effective() == "full_stem":
-                work = append_schema_tags_to_leaf(
-                    fn,
-                    tag_enabled=opts["tag_enabled"],
-                    tag_text=opts["tag_text"],
-                )
-                built, _w = truncate_leaf_stem_to_max_chars(work, opts["title_max_len"])
-                return built.strip() if built.strip() else ""
+            w, h = self._t5_dims_for_row(row)
+            base_in = fn
+            if self._t5_tags_replace_except_auto():
+                base_in = strip_non_auto_bracket_tags_from_leaf(fn)
+            work = append_schema_tags_to_leaf(
+                base_in,
+                tag_enabled=opts["tag_enabled"],
+                tag_text=opts["tag_text"],
+                replace_existing_slot_tags=self._t5_tags_replace_except_auto(),
+            )
+            work2, _mw = merge_schema_metadata_into_append_leaf(
+                work,
+                row,
+                include_year=bool(opts["include_year"]),
+                include_resolution=bool(opts["include_resolution"]),
+                include_rating=bool(opts["include_rating"]),
+                resolution_mode=str(opts["resolution_mode"] or "heightp"),
+                video_width=w,
+                video_height=h,
+                overwrite_auto_tags=False,
+                preserve_auto_tokens_from_leaf=self._t5_tags_replace_except_auto(),
+            )
+            # Tags modes: always shorten only the head before trailing ``[…]`` — never cap the
+            # whole stem (that would chop appended tags when “Protect tags” is off).
             built, _w = build_leaf_tags_only_mode(
                 row,
                 title_max_len=opts["title_max_len"],
                 tag_enabled=opts["tag_enabled"],
                 tag_text=opts["tag_text"],
+                leaf_after_append_and_metadata=work2,
             )
             return built.strip() if built.strip() else ""
         # Full schema: use the real file name so ``merge_extra_bracket_tags_into_leaf`` can
@@ -2795,23 +2864,44 @@ class FileToolsApp(ctk.CTk):
     def _t5_compute_leaf_for_row(self, row: dict[str, str]) -> tuple[str, str]:
         opts = self._t5_schema_options_kwargs()
         scope = self._t5_shorten_scope_effective()
-        if self._t5_append_tags_only.get():
+        if self._t5_in_tags_mode():
             base_leaf = (row.get("new_leaf") or "").strip() or (row.get("file_name") or "").strip()
             if not base_leaf:
                 return "", ""
-            if scope == "full_stem":
-                work = append_schema_tags_to_leaf(
-                    base_leaf,
-                    tag_enabled=opts["tag_enabled"],
-                    tag_text=opts["tag_text"],
-                )
-                return truncate_leaf_stem_to_max_chars(work, opts["title_max_len"])
-            return build_leaf_tags_only_mode(
+            w, h = self._t5_dims_for_row(row)
+            base_in = base_leaf
+            if self._t5_tags_replace_except_auto():
+                base_in = strip_non_auto_bracket_tags_from_leaf(base_leaf)
+            work = append_schema_tags_to_leaf(
+                base_in,
+                tag_enabled=opts["tag_enabled"],
+                tag_text=opts["tag_text"],
+                replace_existing_slot_tags=self._t5_tags_replace_except_auto(),
+            )
+            work2, meta_warn = merge_schema_metadata_into_append_leaf(
+                work,
+                row,
+                include_year=bool(opts["include_year"]),
+                include_resolution=bool(opts["include_resolution"]),
+                include_rating=bool(opts["include_rating"]),
+                resolution_mode=str(opts["resolution_mode"] or "heightp"),
+                video_width=w,
+                video_height=h,
+                overwrite_auto_tags=False,
+                preserve_auto_tokens_from_leaf=self._t5_tags_replace_except_auto(),
+            )
+            warn = meta_warn or ""
+            # Tags modes: always shorten only the title head (see prior_leaf_for_merge).
+            leaf, tw = build_leaf_tags_only_mode(
                 row,
                 title_max_len=opts["title_max_len"],
                 tag_enabled=opts["tag_enabled"],
                 tag_text=opts["tag_text"],
+                leaf_after_append_and_metadata=work2,
             )
+            if tw and not warn:
+                warn = tw
+            return leaf, warn
         w, h = self._t5_dims_for_row(row)
         leaf, warn = build_schema_rename_leaf(
             row,
@@ -2822,15 +2912,10 @@ class FileToolsApp(ctk.CTk):
         if leaf:
             prior = self._t5_prior_leaf_for_merge(row)
             if prior:
-                # “Protect tags” + full schema: with **no** slot checked, merge keeps existing
-                # ``[…]`` from the file name. With **any** slot checked, the schema-built slots
-                # replace those tags; merge is skipped so old brackets are not duplicated.
-                slot_on = any(self._t5_tag_en[i].get() for i in range(5))
-                if self._t5_preserve_tags_on_shorten.get():
-                    if not slot_on:
-                        leaf = merge_extra_bracket_tags_into_leaf(prior, leaf)
-                else:
-                    leaf = merge_extra_bracket_tags_into_leaf(prior, leaf)
+                # Merge keeps ``[…]`` from ``prior`` that are still missing on ``schema_leaf``.
+                # Inners already present on ``leaf`` (including from checked slots / resolution /
+                # rating) are skipped, so duplicates are not added.
+                leaf = merge_extra_bracket_tags_into_leaf(prior, leaf)
             if scope == "full_stem":
                 leaf2, tw = truncate_leaf_stem_to_max_chars(leaf, opts["title_max_len"])
                 leaf = leaf2
@@ -2853,12 +2938,14 @@ class FileToolsApp(ctk.CTk):
                     str(i),
                     (
                         row.get("file_path", ""),
+                        "",
                         row.get("file_name", ""),
+                        "",
+                        leaf or "—",
                         row.get("scene_title", ""),
                         row.get("scene_tags", ""),
                         row.get("scene_markers", ""),
                         row.get("scene_date", ""),
-                        leaf or "—",
                     ),
                 )
             )
@@ -3426,7 +3513,10 @@ class FileToolsApp(ctk.CTk):
         for i in visible:
             row = self._t4_rows[i]
             rows_out.append(
-                (str(i), (row.get("file_path", ""), row.get("file_name", ""), row.get("scene_id", ""))),
+                (
+                    str(i),
+                    (row.get("file_path", ""), "", row.get("file_name", ""), "", row.get("scene_id", "")),
+                ),
             )
         self._ttk_tree_replace_rows(self._t4_tree, rows_out)
         self._ttk_restore_row_selection(self._t4_tree, prev)
@@ -3757,7 +3847,9 @@ class FileToolsApp(ctk.CTk):
                     str(i),
                     (
                         row.get("file_path", ""),
+                        "",
                         row.get("file_name", ""),
+                        "",
                         row.get("new_leaf", ""),
                     ),
                 )
@@ -4277,6 +4369,85 @@ class FileToolsApp(ctk.CTk):
             + "\n"
         )
 
+    def _open_t5_schema_help_dialog(self) -> None:
+        if self._t5_help_dialog is not None:
+            try:
+                if self._t5_help_dialog.winfo_exists():
+                    self._t5_help_dialog.focus()
+                    return
+            except TclError:
+                pass
+            self._t5_help_dialog = None
+
+        top = ctk.CTkToplevel(self, fg_color=self._pal["bg"])
+        self._t5_help_dialog = top
+        top.title(self._tr("t5.help.window_title"))
+        top.geometry("560x640")
+        top.minsize(440, 420)
+        top.transient(self)
+        top.grab_set()
+
+        pad = {"padx": 14, "pady": (8, 6)}
+        outer = ctk.CTkScrollableFrame(
+            top,
+            fg_color=self._pal["panel"],
+            scrollbar_fg_color=self._pal["panel_elev"],
+            scrollbar_button_color=self._pal["border"],
+            scrollbar_button_hover_color=self._pal["cyan_dim"],
+        )
+        outer.pack(fill="both", expand=True, padx=10, pady=10)
+
+        self._label(
+            outer,
+            text=self._tr("t5.help.intro"),
+            anchor="w",
+            justify="left",
+            wraplength=480,
+            font=FONT_UI_SM,
+            fg_color=self._pal["panel"],
+        ).pack(fill="x", **pad)
+
+        def section(title_key: str, body_key: str) -> None:
+            self._label(outer, text=self._tr(title_key), anchor="w", font=FONT_SECTION, fg_color=self._pal["panel"]).pack(
+                fill="x", **pad
+            )
+            self._label(
+                outer,
+                text=self._tr(body_key),
+                anchor="w",
+                justify="left",
+                wraplength=480,
+                text_color=self._pal["muted"],
+                font=FONT_HINT,
+                fg_color=self._pal["panel"],
+            ).pack(fill="x", padx=14, pady=(0, 10))
+
+        section("t5.help.heading_modes", "t5.name_mode_hint")
+        section("t5.help.heading_protect", "t5.preserve_tags_hint")
+        section("t5.help.heading_tags", "t5.tag_structure_hint")
+        section("t5.help.heading_metadata", "t5.help.body_metadata")
+
+        btns = ctk.CTkFrame(top, fg_color=self._pal["bg"])
+        btns.pack(fill="x", padx=14, pady=(0, 12))
+
+        def on_close() -> None:
+            try:
+                top.grab_release()
+            except TclError:
+                pass
+            top.destroy()
+            self._t5_help_dialog = None
+
+        ok_t = self._tr("common.ok")
+        ctk.CTkButton(
+            btns,
+            text=ok_t,
+            width=_btn_w(ok_t, lo=52),
+            command=on_close,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
+        ).pack(side="right")
+        top.protocol("WM_DELETE_WINDOW", on_close)
+
     def _open_settings_dialog(self) -> None:
         if self._settings_dialog is not None:
             try:
@@ -4461,6 +4632,7 @@ class FileToolsApp(ctk.CTk):
             self._t1_delim.set(d if d in (";", ",") else ";")
 
             self._t1_ps1.set(ps1.get())
+            self._ensure_bundled_export_ps1_path()
             self._t1_url.set(url.get())
             self._t1_api.set(api.get())
             self._t1_graphql_path.set(gql.get())
@@ -4555,15 +4727,29 @@ class FileToolsApp(ctk.CTk):
             "t5_include_year": self._t5_include_year.get(),
             "t5_include_resolution": self._t5_include_resolution.get(),
             "t5_include_rating": self._t5_include_rating.get(),
-            "t5_resolution_mode": self._t5_resolution_mode.get(),
             "t5_dry": self._t5_dry.get(),
             "t5_use_selected": self._t5_use_selected.get(),
-            "t5_append_tags_only": self._t5_append_tags_only.get(),
+            "t5_name_mode": self._t5_name_mode.get(),
+            "t5_append_tags_only": self._t5_in_tags_mode(),
             "t5_preserve_tags_on_shorten": self._t5_preserve_tags_on_shorten.get(),
             "t5_tag_en": [self._t5_tag_en[i].get() for i in range(5)],
             "t5_tag_txt": [self._t5_tag_txt[i].get() for i in range(5)],
             "t5_preset_name": self._t5_preset_name.get(),
+            "log_panel_collapsed": self._log_collapsed.get(),
         }
+
+    def _ensure_bundled_export_ps1_path(self) -> None:
+        """Frozen EXE ships ``export_stash_files.ps1`` under ``_MEIPASS``; settings may still hold an old dev path."""
+        bundle = _resource_dir() / "export_stash_files.ps1"
+        if not bundle.is_file():
+            return
+        cur = self._t1_ps1.get().strip()
+        if cur and Path(cur).is_file():
+            return
+        try:
+            self._t1_ps1.set(str(bundle.resolve()))
+        except OSError:
+            self._t1_ps1.set(str(bundle))
 
     def _load_settings(self) -> None:
         if not _SETTINGS_PATH.is_file():
@@ -4634,21 +4820,19 @@ class FileToolsApp(ctk.CTk):
         g("t5_include_year", self._t5_include_year)
         g("t5_include_resolution", self._t5_include_resolution)
         g("t5_include_rating", self._t5_include_rating)
-        g("t5_resolution_mode", self._t5_resolution_mode)
         g("t5_dry", self._t5_dry)
         g("t5_use_selected", self._t5_use_selected)
-        if "t5_append_tags_only" in data:
-            g("t5_append_tags_only", self._t5_append_tags_only)
-        elif "t5_name_mode" in data:
-            nm = data.get("t5_name_mode")
-            if isinstance(nm, str):
-                x = nm.strip().lower()
-                if x in ("tags_append", "tags_append_shorten"):
-                    self._t5_append_tags_only.set(True)
-                elif x == "full_schema":
-                    self._t5_append_tags_only.set(False)
+        if "t5_name_mode" in data:
+            g("t5_name_mode", self._t5_name_mode)
+            if (self._t5_name_mode.get() or "").strip().lower() == "tags_overwrite":
+                self._t5_name_mode.set("tags_replace_except_auto")
+        elif "t5_append_tags_only" in data:
+            if bool(data.get("t5_append_tags_only")):
+                self._t5_name_mode.set("tags_append")
+            else:
+                self._t5_name_mode.set("full_schema")
         elif "t5_tags_only_mode" in data or "t5_tags_shorten_title" in data:
-            self._t5_append_tags_only.set(bool(data.get("t5_tags_only_mode", False)))
+            self._t5_name_mode.set("tags_append" if bool(data.get("t5_tags_only_mode", False)) else "full_schema")
         if "t5_preserve_tags_on_shorten" in data:
             g("t5_preserve_tags_on_shorten", self._t5_preserve_tags_on_shorten)
         elif "t5_shorten_scope" in data:
@@ -4658,6 +4842,7 @@ class FileToolsApp(ctk.CTk):
             elif isinstance(ss, str) and ss.strip().lower() == "full_stem":
                 self._t5_preserve_tags_on_shorten.set(False)
         g("t5_preset_name", self._t5_preset_name)
+        g("log_panel_collapsed", self._log_collapsed)
         g("ui_language", self._ui_language)
         te = data.get("t5_tag_en")
         if isinstance(te, list):
@@ -4707,9 +4892,6 @@ class FileToolsApp(ctk.CTk):
             self._t1_delim.set(";")
         ul = self._norm_lang_code(self._ui_language.get())
         self._ui_language.set(ul)
-        rm = (self._t5_resolution_mode.get() or "heightp").strip().lower()
-        if rm not in ("heightp", "wxh"):
-            self._t5_resolution_mode.set("heightp")
         self._apply_user_appearance_setting()
         if hasattr(self, "_translator"):
             self._translator.set_lang(ul)

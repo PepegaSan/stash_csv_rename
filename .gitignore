@@ -30,6 +30,9 @@ file_tools_csv/
 gui_file_tools_design_test.py
 start_design_test.bat
 
+# Local palette / example UI kit (personal; not shipped in the exe)
+design_kit/
+
 # Tooling / IDEs
 .idea/
 .vscode/

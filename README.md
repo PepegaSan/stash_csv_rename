@@ -30,7 +30,7 @@ There is **no guaranteed pre-built binary in this repo** (GitHub Releases are op
 
 1. Install **Python 3.10+** and ensure **`python`** is on **`PATH`**.
 2. Run **`build_exe.bat`** in the repository root. It installs **`requirements.txt`** and **`requirements-build.txt`**, then runs **PyInstaller** with **`packaging\stashmarker_onefile.spec`** and writes **`dist\Stashmarker.exe`** (one-file bundle, **no console window** — windowed GUI only).
-3. Copy **`Stashmarker.exe`** wherever you like. On first run it creates **`gui_file_tools_settings.json`**, **`schema_rename_presets.json`**, and **`file_tools_csv\`** next to the `.exe` (same behaviour as running from source, where those files are created next to the script or project folder depending on how you launch).
+3. Copy **`Stashmarker.exe`** wherever you like. On first run it creates **`gui_file_tools_settings.json`**, **`schema_rename_presets.json`**, and **`file_tools_csv\`** next to the `.exe` (same behaviour as running from source, where those files are created next to the script or project folder depending on how you launch). The export script **`export_stash_files.ps1`** is **inside** the `.exe`; if your settings file still points to an old path from a dev install, the app resets Tab 1 to the bundled script when that path is missing.
 
 Maintainers can use **Actions → “Build Windows exe”** (workflow dispatch) to produce a downloadable **artifact** without a local PyInstaller install.
 

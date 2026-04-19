@@ -1687,6 +1687,16 @@ def sanitize_schema_label(s: str, *, max_len: int = 80) -> str:
     return t[:max_len]
 
 
+def schema_unlimited_title_head_from_row(row: dict[str, str]) -> str:
+    """
+    Sanitized title used when ``title_max_len`` <= 0 in ``build_schema_rename_leaf`` — same
+    source as the unlimited (non-truncated) head: ``scene_title`` / file stem, max 400 chars.
+    """
+    title_src = primary_label_for_schema_row(row)
+    t = sanitize_schema_label(title_src, max_len=400)
+    return t if t else "video"
+
+
 def build_schema_rename_leaf(
     row: dict[str, str],
     *,
@@ -1723,17 +1733,14 @@ def build_schema_rename_leaf(
     te = te[:5]
     tt = tt[:5]
 
-    title_src = primary_label_for_schema_row(row)
-    title = sanitize_schema_label(title_src, max_len=400)
-    if not title:
-        title = "video"
+    base_title = schema_unlimited_title_head_from_row(row)
     # 0 (or negative): keep full sanitized title; 1–200: truncate only the head before any
     # trailing ``[…]`` blocks (those are tags on the file name, not part of the title string).
     if tml <= 0:
-        title_short = title
+        title_short = base_title
     else:
         tml = max(1, min(200, tml))
-        head_for_len = title_head_before_trailing_bracket_tags(title)
+        head_for_len = title_head_before_trailing_bracket_tags(base_title)
         title_short = head_for_len[:tml]
 
     year_part = ""
@@ -1777,15 +1784,37 @@ def build_schema_rename_leaf(
     return leaf, warn
 
 
+def _remove_bracket_tokens_with_inners_casefold(stem: str, inners_cf: set[str]) -> str:
+    """Remove `` [inner]`` / ``[inner]`` groups whose ``inner.casefold()`` is in ``inners_cf``."""
+    if not stem or not inners_cf:
+        return stem
+    parts: list[str] = []
+    pos = 0
+    for m in re.finditer(r"\s*\[([^\]]+)\]", stem):
+        parts.append(stem[pos : m.start()])
+        inner_cf = m.group(1).strip().casefold()
+        if inner_cf not in inners_cf:
+            parts.append(m.group(0))
+        pos = m.end()
+    parts.append(stem[pos:])
+    joined = "".join(parts)
+    joined = re.sub(r" {2,}", " ", joined).rstrip()
+    return joined
+
+
 def append_schema_tags_to_leaf(
     base_leaf: str,
     *,
     tag_enabled: Optional[list[bool]] = None,
     tag_text: Optional[list[str]] = None,
+    replace_existing_slot_tags: bool = False,
 ) -> str:
     """
     Append currently enabled custom ``[tag]`` slots to an existing file leaf without rebuilding title/year.
     Existing bracket tokens are kept and duplicates are avoided (case-insensitive).
+
+    If ``replace_existing_slot_tags`` is True, any existing ``[inner]`` matching a **checked**
+    slot's text (after sanitise) is removed first so the slot can be re-applied (overwrite-tags mode).
     """
     leaf = (base_leaf or "").strip()
     if not leaf:
@@ -1802,11 +1831,28 @@ def append_schema_tags_to_leaf(
     te = te[:5]
     tt = tt[:5]
 
-    existing = {
-        m.group(1).strip().casefold()
-        for m in re.finditer(r"\[([^\]]+)\]", leaf)
-        if m.group(1).strip()
-    }
+    if replace_existing_slot_tags:
+        targets_cf: set[str] = set()
+        for i in range(5):
+            if te[i] and (tt[i] or "").strip():
+                inn = sanitize_schema_label((tt[i] or "").strip(), max_len=40)
+                if inn:
+                    targets_cf.add(inn.casefold())
+        if targets_cf:
+            ext = Path(leaf).suffix
+            stem = leaf[: -len(ext)] if ext else leaf
+            stem = _remove_bracket_tokens_with_inners_casefold(stem, targets_cf)
+            stem = stem.rstrip() or "video"
+            leaf = f"{stem}{ext}"
+
+    existing: set[str] = set()
+    for m in re.finditer(r"\[([^\]]+)\]", leaf):
+        raw = (m.group(1) or "").strip()
+        if not raw:
+            continue
+        sx = sanitize_schema_label(raw, max_len=40)
+        if sx:
+            existing.add(sx.casefold())
 
     add: list[str] = []
     for i in range(5):
@@ -1874,16 +1920,326 @@ def merge_extra_bracket_tags_into_leaf(prior_leaf: str, schema_leaf: str) -> str
 
 def split_stem_trailing_bracket_groups(stem: str) -> tuple[str, str]:
     """
-    Split ``stem`` into (head, trailing_groups) where trailing_groups is a suffix of the form
-    `` [a] [b]`` (one or more bracket tokens). If there is no such suffix, returns ``(stem, "")``.
+    Split ``stem`` into (head, trailing_groups) where ``trailing_groups`` collects a suffix made of
+    `` [tag]`` tokens and optional Windows-style **copy markers** ``]_1``, ``]_2``, … between tags.
+
+    Parsed **from the right**: e.g. ``10001_ - [Cat] [720p]_1 [Dog] [Park]`` yields head
+    ``10001_ -`` and tail `` [Cat] [720p]_1 [Dog] [Park]``. A single regex on ``(brackets)+(_\\d+)?$``
+    is wrong once ``_1`` is followed by more `` […]`` tokens (append-tags / fill order).
+
+    If nothing matches, returns ``(stem, "")``.
     """
     stem = (stem or "").rstrip()
     if not stem:
         return "", ""
-    m = re.search(r"((?:\s*\[[^\]]+\])+)\s*$", stem)
-    if not m:
+    chunks_rev: list[str] = []
+    s = stem
+    _re_bracket_end = re.compile(r"(\s*\[[^\]]+\])\s*$")
+    _re_copy_after_bracket = re.compile(r"](_\d+)\s*$")
+    while True:
+        s = s.rstrip()
+        if not s:
+            break
+        m_copy = _re_copy_after_bracket.search(s)
+        m_br = _re_bracket_end.search(s)
+        take_copy = bool(m_copy) and (not m_br or m_copy.start() > m_br.start())
+        if take_copy:
+            chunks_rev.append(m_copy.group(1))
+            s = s[: m_copy.start() + 1].rstrip()
+            continue
+        if m_br:
+            chunks_rev.append(m_br.group(1))
+            s = s[: m_br.start()].rstrip()
+            continue
+        break
+    if not chunks_rev:
         return stem, ""
-    return stem[: m.start(1)].rstrip(), m.group(1)
+    tail = "".join(reversed(chunks_rev))
+    return s.rstrip(), tail
+
+
+def rehydrate_leaf_stem_head_from_schema_row(row: dict[str, str], leaf: str) -> tuple[str, str]:
+    """
+    Replace the stem head (text before trailing `` […] `` groups) with the full schema title
+    from the CSV row — same unlimited head as ``build_schema_rename_leaf`` with
+    ``title_max_len`` <= 0. Preserves extension and trailing bracket groups on ``leaf``.
+
+    Used for append-tags-only when title max is unlimited so the preview does not stay stuck
+    on an older shortened ``new_leaf`` / file stem.
+    """
+    warn = ""
+    leaf = (leaf or "").strip()
+    if not leaf:
+        return "", ""
+    if any(c in leaf for c in '\\/:*?"<>|'):
+        return "", "result contains illegal filename characters"
+    ext = Path(leaf).suffix
+    stem = leaf[: -len(ext)] if ext else leaf
+    _head, tail = split_stem_trailing_bracket_groups(stem)
+    title_short = schema_unlimited_title_head_from_row(row)
+    new_stem = f"{title_short}{tail}".rstrip()
+    out = f"{new_stem}{ext}"
+    if any(c in out for c in '\\/:*?"<>|'):
+        return "", "result contains illegal filename characters"
+    if not out.strip():
+        return "", "empty file name"
+    return out, warn
+
+
+_YEAR_PARENS_END_RE = re.compile(r"\s*\((19|20)\d{2}\)\s*$")
+
+
+def _strip_trailing_year_parens(head: str) -> str:
+    h = (head or "").rstrip()
+    while True:
+        m = _YEAR_PARENS_END_RE.search(h)
+        if not m:
+            return h
+        h = h[: m.start()].rstrip()
+
+
+def _head_ends_with_year_parens(head: str) -> bool:
+    return bool(_YEAR_PARENS_END_RE.search((head or "").rstrip()))
+
+
+def _bracket_inners_ordered_from_suffix(s: str) -> list[str]:
+    s = (s or "").strip()
+    if not s:
+        return []
+    return [m.group(1).strip() for m in re.finditer(r"\[([^\]]+)\]", s) if m.group(1).strip()]
+
+
+def _looks_like_schema_resolution_inner(inner: str) -> bool:
+    t = (inner or "").strip()
+    if re.fullmatch(r"\d+p", t, flags=re.IGNORECASE):
+        return True
+    return bool(re.fullmatch(r"\d+\s*x\s*\d+", t, flags=re.IGNORECASE))
+
+
+def _looks_like_compact_schema_rating_inner(inner: str) -> bool:
+    """Single-digit 1–5 (star buckets from numeric Stash rating)."""
+    t = (inner or "").strip()
+    if len(t) != 1 or not t.isdigit():
+        return False
+    v = int(t)
+    return 1 <= v <= 5
+
+
+def _stem_contains_resolution_like_bracket(stem: str) -> bool:
+    """True if ``stem`` already has any ``[…]`` token that looks like a resolution label."""
+    for m in re.finditer(r"\[([^\]]+)\]", stem or ""):
+        if _looks_like_schema_resolution_inner(m.group(1)):
+            return True
+    return False
+
+
+def _stem_contains_compact_rating_like_bracket(stem: str) -> bool:
+    """True if ``stem`` already has a compact ``[1]``–``[5]`` style rating token."""
+    for m in re.finditer(r"\[([^\]]+)\]", stem or ""):
+        if _looks_like_compact_schema_rating_inner(m.group(1)):
+            return True
+    return False
+
+
+def _restore_bracket_copy_suffixes(out_stem: str, prior_tail_groups: str) -> str:
+    """
+    Re-insert ``]_N`` copy markers that followed a ``[inner]`` in the original trailing tail.
+
+    ``merge_schema_metadata_into_append_leaf`` rebuilds the suffix from bracket inners only, so
+    ``[720p]_1 [Dog]`` would otherwise become ``[720p] [Dog]`` and move the copy marker incorrectly.
+    """
+    if not out_stem or not prior_tail_groups or "]_" not in prior_tail_groups:
+        return out_stem
+    out = out_stem
+    for m in re.finditer(r"\[([^\]]+)\](_\d+)", prior_tail_groups):
+        inner_s = sanitize_schema_label(m.group(1).strip(), max_len=40)
+        sfx = m.group(2)
+        if not inner_s:
+            continue
+        plain = f"[{inner_s}]"
+        combined = f"[{inner_s}]{sfx}"
+        if combined in out:
+            continue
+        if plain in out:
+            out = out.replace(plain, combined, 1)
+    return out
+
+
+def strip_non_auto_bracket_tags_from_leaf(leaf: str) -> str:
+    """
+    Keep only resolution- and compact-rating-like ``[…]`` tokens in the trailing bracket suffix;
+    drop custom and slot-style brackets so the leaf can be rebuilt from checked slots.
+
+    Year ``(YYYY)`` on the head is left unchanged.
+    """
+    leaf = (leaf or "").strip()
+    if not leaf or any(c in leaf for c in '\\/:*?"<>|'):
+        return leaf
+    ext = Path(leaf).suffix
+    stem = leaf[: -len(ext)] if ext else leaf
+    head, tail_groups = split_stem_trailing_bracket_groups(stem)
+    head = (head or "").rstrip()
+    head = re.sub(r"\s+-\s*$", "", head).rstrip()
+    inners = _bracket_inners_ordered_from_suffix(tail_groups)
+    kept: list[str] = []
+    for x in inners:
+        if _looks_like_schema_resolution_inner(x) or _looks_like_compact_schema_rating_inner(x):
+            sx = sanitize_schema_label(x.strip(), max_len=40)
+            if sx:
+                kept.append(sx)
+    if kept:
+        out_stem = f"{head} - {' '.join(f'[{x}]' for x in kept)}".rstrip()
+    else:
+        out_stem = head
+    return f"{out_stem}{ext}"
+
+
+def merge_schema_metadata_into_append_leaf(
+    base_leaf: str,
+    row: dict[str, str],
+    *,
+    include_year: bool,
+    include_resolution: bool,
+    include_rating: bool,
+    resolution_mode: str,
+    video_width: Optional[int],
+    video_height: Optional[int],
+    overwrite_auto_tags: bool = False,
+    preserve_auto_tokens_from_leaf: bool = False,
+) -> tuple[str, str]:
+    """
+    After custom ``[slot]`` tags were appended, add year / resolution / rating from the CSV row
+    in the same style as ``build_schema_rename_leaf`` (``(YYYY)`` before the `` - […]`` block).
+
+    * Unchecked **include_year / include_resolution / include_rating**: existing matching tokens
+      are removed from the leaf (so you can drop those special tags again).
+    * ``preserve_auto_tokens_from_leaf`` True: never replace an existing year suffix or existing
+      resolution/rating-like ``[…]`` text with CSV/ffprobe values — only add when missing and
+      the corresponding include flag is on.
+    * ``overwrite_auto_tags`` True (optional): replace auto tokens from CSV/ffprobe even when
+      already present (ignored when ``preserve_auto_tokens_from_leaf`` is True).
+    """
+    warn = ""
+    leaf = (base_leaf or "").strip()
+    if not leaf:
+        return "", ""
+    if any(c in leaf for c in '\\/:*?"<>|'):
+        return "", "result contains illegal filename characters"
+
+    ext = Path(leaf).suffix
+    stem = leaf[: -len(ext)] if ext else leaf
+    stem_in = stem
+    head, tail_groups = split_stem_trailing_bracket_groups(stem)
+    head = (head or "").rstrip()
+    # ``split_stem…`` leaves a literal `` - `` before the bracket suffix on disk; drop it here
+    # so year ``(YYYY)`` sits at the head end and we do not emit `` - - […]`` when rebuilding.
+    head = re.sub(r"\s+-\s*$", "", head).rstrip()
+    inners = _bracket_inners_ordered_from_suffix(tail_groups)
+
+    y = year_for_schema_rename_bracket(row) if include_year else ""
+
+    if not include_year:
+        head = _strip_trailing_year_parens(head)
+    elif include_year and y:
+        year_part = f" ({y})"
+        if preserve_auto_tokens_from_leaf:
+            if not _head_ends_with_year_parens(head):
+                head = (head + year_part).rstrip()
+        elif overwrite_auto_tags:
+            head = _strip_trailing_year_parens(head)
+            head = (head + year_part).rstrip()
+        elif not _head_ends_with_year_parens(head):
+            head = (head + year_part).rstrip()
+    elif overwrite_auto_tags and not preserve_auto_tokens_from_leaf:
+        head = _strip_trailing_year_parens(head)
+
+    res_inner = ""
+    if include_resolution and video_width and video_height:
+        res_inner = format_resolution_tag(video_width, video_height, resolution_mode)
+    elif include_resolution:
+        if not warn:
+            warn = "resolution enabled but dimensions missing (click ffprobe start)"
+
+    rat_inner = ""
+    if include_rating:
+        rt = format_rating_token_for_schema(row.get("scene_rating") or "")
+        if rt:
+            rat_inner = str(rt).strip()
+
+    new_inners: list[str] = []
+    for inner in inners:
+        if not include_resolution and _looks_like_schema_resolution_inner(inner):
+            continue
+        if not include_rating and _looks_like_compact_schema_rating_inner(inner):
+            continue
+        if preserve_auto_tokens_from_leaf:
+            new_inners.append(inner)
+            continue
+        if overwrite_auto_tags:
+            if include_resolution and video_width and video_height and res_inner:
+                if _looks_like_schema_resolution_inner(inner) or inner.casefold() == res_inner.casefold():
+                    continue
+            if include_rating and rat_inner:
+                if inner.casefold() == rat_inner.casefold():
+                    continue
+                if rat_inner.isdigit() and len(rat_inner) == 1 and _looks_like_compact_schema_rating_inner(inner):
+                    continue
+        new_inners.append(inner)
+
+    cfset = {x.casefold() for x in new_inners}
+    has_res_anywhere = _stem_contains_resolution_like_bracket(stem_in)
+    has_rat_anywhere = _stem_contains_compact_rating_like_bracket(stem_in)
+
+    if include_resolution and video_width and video_height and res_inner:
+        if preserve_auto_tokens_from_leaf:
+            if not any(_looks_like_schema_resolution_inner(x) for x in new_inners) and not has_res_anywhere:
+                new_inners.append(res_inner)
+                cfset.add(res_inner.casefold())
+        elif overwrite_auto_tags:
+            new_inners.append(res_inner)
+            cfset.add(res_inner.casefold())
+        elif (
+            not any(_looks_like_schema_resolution_inner(x) for x in new_inners)
+            and not has_res_anywhere
+            and res_inner.casefold() not in cfset
+        ):
+            new_inners.append(res_inner)
+            cfset.add(res_inner.casefold())
+
+    if include_rating and rat_inner:
+        if preserve_auto_tokens_from_leaf:
+            if (
+                rat_inner.casefold() not in cfset
+                and not any(_looks_like_compact_schema_rating_inner(x) for x in new_inners)
+                and not has_rat_anywhere
+            ):
+                new_inners.append(rat_inner)
+                cfset.add(rat_inner.casefold())
+        elif overwrite_auto_tags:
+            if rat_inner.casefold() not in cfset:
+                new_inners.append(rat_inner)
+                cfset.add(rat_inner.casefold())
+        elif rat_inner.casefold() not in cfset and not has_rat_anywhere:
+            new_inners.append(rat_inner)
+            cfset.add(rat_inner.casefold())
+
+    sanitized: list[str] = []
+    for x in new_inners:
+        sx = sanitize_schema_label(x.strip(), max_len=40)
+        if sx:
+            sanitized.append(sx)
+    if sanitized:
+        out_stem = f"{head} - {' '.join(f'[{x}]' for x in sanitized)}".rstrip()
+    else:
+        out_stem = head
+    if tail_groups:
+        out_stem = _restore_bracket_copy_suffixes(out_stem, tail_groups)
+    out = f"{out_stem}{ext}"
+    if any(c in out for c in '\\/:*?"<>|'):
+        return "", "result contains illegal filename characters"
+    if not out.strip():
+        return "", "empty file name"
+    return out, warn
 
 
 def build_leaf_tags_only_mode(
@@ -1892,35 +2248,50 @@ def build_leaf_tags_only_mode(
     title_max_len: object = 15,
     tag_enabled: Optional[list[bool]] = None,
     tag_text: Optional[list[str]] = None,
+    leaf_after_append_and_metadata: Optional[str] = None,
 ) -> tuple[str, str]:
     """
     "Only add tags" behaviour: append checked ``[slot]`` tokens to the current leaf, then shorten
     only the leading stem (before trailing `` [...] `` groups) using ``title_max_len`` — same
-    rules as ``build_schema_rename_leaf`` (0 = full head, 1–200 = truncate).
+    rules as ``build_schema_rename_leaf`` (0 = unlimited: full schema title from the row, not
+    the previous shortened stem; 1–200 = truncate that head).
+
+    If ``leaf_after_append_and_metadata`` is set, the slot-append + CSV metadata merge was done
+    elsewhere; only shortening / rehydration runs here.
     """
     warn = ""
-    base_leaf = ((row.get("new_leaf") or "").strip() or (row.get("file_name") or "").strip())
-    if not base_leaf:
-        return "", ""
-    if any(c in base_leaf for c in '\\/:*?"<>|'):
-        return "", "result contains illegal filename characters"
+    if leaf_after_append_and_metadata is not None:
+        work = (leaf_after_append_and_metadata or "").strip()
+        if not work:
+            return "", ""
+        if any(c in work for c in '\\/:*?"<>|'):
+            return "", "result contains illegal filename characters"
+    else:
+        base_leaf = ((row.get("new_leaf") or "").strip() or (row.get("file_name") or "").strip())
+        if not base_leaf:
+            return "", ""
+        if any(c in base_leaf for c in '\\/:*?"<>|'):
+            return "", "result contains illegal filename characters"
 
-    work = append_schema_tags_to_leaf(
-        base_leaf,
-        tag_enabled=tag_enabled,
-        tag_text=tag_text,
-    )
-    if not work.strip():
-        return "", ""
-
-    ext = Path(work).suffix
-    stem = work[: -len(ext)] if ext else work
-    head, tail = split_stem_trailing_bracket_groups(stem)
+        work = append_schema_tags_to_leaf(
+            base_leaf,
+            tag_enabled=tag_enabled,
+            tag_text=tag_text,
+        )
+        if not work.strip():
+            return "", ""
 
     try:
         tml = int(title_max_len)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         tml = 15
+
+    if tml <= 0:
+        return rehydrate_leaf_stem_head_from_schema_row(row, work)
+
+    ext = Path(work).suffix
+    stem = work[: -len(ext)] if ext else work
+    head, tail = split_stem_trailing_bracket_groups(stem)
 
     raw_head = head.strip()
     if not raw_head:
@@ -1932,11 +2303,8 @@ def build_leaf_tags_only_mode(
     if not title:
         title = "video"
 
-    if tml <= 0:
-        title_short = title
-    else:
-        cap = max(1, min(200, tml))
-        title_short = title[:cap]
+    cap = max(1, min(200, tml))
+    title_short = title[:cap]
 
     new_stem = f"{title_short}{tail}".rstrip()
     leaf = f"{new_stem}{ext}"

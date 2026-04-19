@@ -95,6 +95,20 @@ row(
 row("common.save_log", "Save log to file…", "Protokoll speichern…", "Guardar registro en archivo…", "Enregistrer le journal…")
 row("common.clear_log", "Clear log", "Protokoll leeren", "Vaciar registro", "Vider le journal")
 row(
+    "common.log_collapse",
+    "Hide log panel",
+    "Log einklappen",
+    "Ocultar registro",
+    "Masquer le journal",
+)
+row(
+    "common.log_expand",
+    "Show log panel",
+    "Log ausklappen",
+    "Mostrar registro",
+    "Afficher le journal",
+)
+row(
     "common.undo_last_rename",
     "Undo last rename",
     "Letzte Umbenennung rückgängig",
@@ -382,6 +396,7 @@ row(
     "Seulement les éléments sous ce dossier (optionnel)",
 )
 row("t3.col.path", "Full path", "Voller Pfad", "Ruta completa", "Chemin complet")
+row("t3.col.path_gap", "\u2502", "\u2502", "\u2502", "\u2502")
 row("t3.col.name", "Current file name", "Aktueller Dateiname", "Nombre de archivo actual", "Nom de fichier actuel")
 row("t3.col.new_leaf", "New file name", "Neuer Dateiname", "Nuevo nombre de archivo", "Nouveau nom de fichier")
 row("t3.copy_folder", "Copy folder path", "Ordnerpfad kopieren", "Copiar ruta de carpeta", "Copier le chemin du dossier")
@@ -525,17 +540,17 @@ row(
 )
 row(
     "t5.preserve_tags_hint",
-    "Off: drop tags & shorten the title. On: keep and edit […] tag blocks.",
-    "Aus: Tags löschen & Titel kürzen. An: Tags bearbeiten.",
-    "Desactivado: quitar etiquetas y acortar título. Activado: conservar y editar bloques […].",
-    "Désactivé : supprimer les tags et raccourcir le titre. Activé : conserver et éditer les blocs […].",
+    "**`Title max.`** is applied first when a name is shortened.\n\n**Protect tags** only applies with **Full schema name:** it keeps the `[…]` blocks at the **end** of the name (including tags that were already there).\n\nWith **Add tags** or **Replace other tags**, only the **front title** is shortened — the tag block at the end is not cut off.",
+    "**`Titel max.`** gilt zuerst, wenn ein Name gekürzt wird.\n\n**Tags schonen** wirkt nur bei **Voller Schema-Name:** Die `[…]` am **Ende** bleiben (auch schon vorhandene Tags).\n\nBei **Tags anhängen** und **Andere Tags ersetzen** wird nur der **vordere Titel** gekürzt — die Tags am Ende bleiben unangetastet.",
+    "**`Título máx.`** se aplica primero al acortar.\n\n**Proteger etiquetas** solo con **nombre completo del esquema:** conserva los `[…]` del **final** (incluidas etiquetas que ya hubiera).\n\nCon **Añadir etiquetas** o **Reemplazar otras**, solo se acorta el **título delantero**; el bloque final de etiquetas no se corta.",
+    "**`Titre max.`** s’applique en premier lors du raccourcissement.\n\n**Protéger les tags** uniquement avec **nom complet (schéma) :** conserve les `[…]` en **fin** de nom (y compris les tags déjà présents).\n\nAvec **Ajouter des tags** ou **Remplacer les autres**, seul le **titre de tête** est raccourci — le bloc de tags en fin n’est pas tronqué.",
 )
 row(
     "t5.from_csv_label",
-    "From CSV / file into the name (when “Add tags” is off)",
-    "Aus CSV / Datei in den Namen (wenn „Tags dranhängen“ aus ist)",
-    "Desde CSV / archivo en el nombre (con «Añadir etiquetas» desactivado)",
-    "Depuis le CSV / fichier dans le nom (si « Ajouter des tags » est désactivé)",
+    "Year, resolution, rating (CSV / ffprobe / file)",
+    "Jahr, Auflösung, Bewertung (CSV / ffprobe / Datei)",
+    "Año, resolución, valoración (CSV / ffprobe / archivo)",
+    "Année, résolution, note (CSV / ffprobe / fichier)",
 )
 row(
     "t5.append_tags_only",
@@ -546,10 +561,75 @@ row(
 )
 row(
     "t5.append_tags_hint_short",
-    "On: If tags below are checked, they are added. Off: If tags below are checked, they replace the old ones.",
-    "An: Wenn unten Tags aktiviert sind, werden sie angehängt. Aus: Wenn unten Tags aktiviert sind, ersetzen sie die alten.",
-    "Activado: si marcas etiquetas abajo, se añaden. Desactivado: si marcas etiquetas abajo, sustituyen a las anteriores.",
-    "Activé : si des cases en bas sont cochées, les tags s’ajoutent. Désactivé : si des cases en bas sont cochées, ils remplacent les anciens.",
+    "On: Only checked tag slots below are appended (unchecked = nothing added). Off: Checked slots are built into the full schema name and replace old […] tags.",
+    "An: Nur angehakte Tag-Slots unten werden angehängt (ohne Haken = kein Anhängen). Aus: Angehakte Slots gehen in den vollen Schema-Namen und ersetzen alte […]-Tags.",
+    "Activado: solo las ranuras marcadas se añaden (sin marcar = no se añade nada). Desactivado: las marcadas entran en el nombre completo y sustituyen […] antiguos.",
+    "Activé : seuls les emplacements cochés s’ajoutent (décoché = rien n’est ajouté). Désactivé : les cases cochées entrent dans le nom complet et remplacent les anciens […].",
+)
+row(
+    "t5.name_mode.full_schema",
+    "Full schema name",
+    "Voller Schema-Name",
+    "Nombre completo del esquema",
+    "Nom complet (schéma)",
+)
+row(
+    "t5.name_mode.tags_append",
+    "Add tags",
+    "Tags anhängen",
+    "Añadir etiquetas",
+    "Ajouter des tags",
+)
+row(
+    "t5.name_mode.tags_replace_except_auto",
+    "Replace other tags (keep year / res / rating)",
+    "Andere Tags ersetzen (Jahr / Auflösung / Bewertung behalten)",
+    "Reemplazar otras etiquetas (conservar año / res / valoración)",
+    "Remplacer les autres tags (garder année / rés. / note)",
+)
+row(
+    "t5.name_mode_hint",
+    "**Full schema name**\nRebuilds the whole file name from your choices.\n\n**Add tags**\nKeeps every existing `[…]` block. Appends only the checked tag slots. Year, resolution, and rating: checkbox on adds them, off removes them when the rules allow.\n\n**Replace other tags**\nRemoves custom `[…]` blocks. Keeps resolution text (for example `1080p`) and star ratings `[1]`–`[5]`. Rebuilds checked slots. Year, resolution, and rating are only added when still missing — nothing already in the name is overwritten.",
+    "**Voller Schema-Name**\nBaut den ganzen Dateinamen neu.\n\n**Tags anhängen**\nAlle `[…]` bleiben. Nur angehakte Slots werden angehängt. Jahr, Auflösung, Bewertung: Haken an legt sie an, Haken aus entfernt sie (wenn möglich).\n\n**Andere Tags ersetzen**\nEigene `[…]` werden entfernt; Auflösung (z. B. `1080p`) und Sterne `[1]`–`[5]` bleiben. Slots werden neu gesetzt. Jahr, Auflösung, Bewertung: nur nachtragen, wenn sie im Namen noch fehlen — nichts wird überschrieben.",
+    "**Nombre completo del esquema**\nRehace todo el nombre del archivo.\n\n**Añadir etiquetas**\nConserva todos los `[…]`. Añade solo las ranuras marcadas. Año, resolución y valoración: marcado las añade; sin marcar, intenta quitarlas si aplica.\n\n**Reemplazar otras**\nQuita `[…]` personalizados; conserva resolución (p. ej. `1080p`) y notas `[1]`–`[5]`. Vuelve a crear las ranuras. Año/res/valoración solo si faltan en el nombre — no sustituye lo que ya hay.",
+    "**Nom complet (schéma)**\nReconstruit tout le nom du fichier.\n\n**Ajouter des tags**\nConserve tous les `[…]`. N’ajoute que les emplacements cochés. Année, résolution, note : la case cochée ajoute, décochée retire quand c’est possible.\n\n**Remplacer les autres**\nSupprime les `[…]` personnalisés ; garde la résolution (ex. `1080p`) et les notes `[1]`–`[5]`. Recrée les emplacements. Année/rés/note seulement si absent du nom — rien n’est écrasé.",
+)
+row(
+    "t5.help.window_title",
+    "Schema rename — help",
+    "Schema-Umbenennen — Hilfe",
+    "Renombre por esquema — ayuda",
+    "Renommage (schéma) — aide",
+)
+row(
+    "t5.help.intro",
+    "The table shows each row’s path, current file name, and proposed name. Below you pick how names are built or adjusted. The sections in this window explain each option in more detail.",
+    "Die Tabelle zeigt Pfad, aktuellen Dateinamen und den Vorschlagsnamen. Darunter stellst du ein, wie Namen gebaut oder angepasst werden. Die Abschnitte hier erklären die Optionen ausführlicher.",
+    "La tabla muestra ruta, nombre actual y propuesta. Abajo eliges cómo se construyen los nombres; estas secciones lo detallan.",
+    "Le tableau montre chemin, nom actuel et proposition. En dessous vous choisissez la construction du nom ; ces sections détaillent chaque option.",
+)
+row("t5.help.heading_modes", "Naming modes", "Namens-Modi", "Modos de nombre", "Modes de nommage")
+row(
+    "t5.help.heading_protect",
+    "Protect tags (full schema)",
+    "Tags schonen (volles Schema)",
+    "Proteger etiquetas (esquema completo)",
+    "Protéger les tags (schéma complet)",
+)
+row("t5.help.heading_tags", "Tag slots (1–5)", "Tag-Slots (1–5)", "Ranuras de etiquetas (1–5)", "Emplacements de tags (1–5)")
+row(
+    "t5.help.heading_metadata",
+    "Year, resolution, rating & ffprobe",
+    "Jahr, Auflösung, Bewertung & ffprobe",
+    "Año, resolución, valoración y ffprobe",
+    "Année, résolution, note et ffprobe",
+)
+row(
+    "t5.help.body_metadata",
+    "The three checkboxes add or remove year (from the CSV or the file’s date where available), resolution (from video dimensions after you run ffprobe), and rating (from the CSV). When a box is off, matching tokens are removed from the name when the logic allows.\n\nResolution text uses common height labels such as 1080p; if the height does not match a standard step, width×height is used instead.",
+    "Die drei Checkboxen steuern Jahr (CSV oder Datum der Datei, wo das OS es hergibt), Auflösung (aus den Abmessungen nach ffprobe) und Bewertung (CSV). Ist eine Option aus, werden passende Teile im Namen entfernt, wenn die Regeln das zulassen.\n\nAuflösung: übliche Stufen wie 1080p; passt die Höhe in keine Stufe, wird Breite×Höhe verwendet.",
+    "Las tres casillas añaden o quitan año (CSV o fecha del archivo), resolución (tras ffprobe) y valoración (CSV). Desmarcar intenta quitar esos trozos del nombre cuando corresponde.\n\nResolución: etiquetas por altura (p. ej. 1080p); si no encaja, ancho×alto.",
+    "Les trois cases ajoutent ou retirent l’année (CSV ou date du fichier), la résolution (après ffprobe) et la note (CSV). Décochée, la valeur correspondante est retirée du nom quand c’est possible.\n\nRésolution : libellés par hauteur (ex. 1080p) ; sinon largeur×hauteur.",
 )
 row(
     "t5.include_year",
@@ -564,6 +644,13 @@ row("t5.resolution_mode", "Resolution label", "Auflösungs-Anzeige", "Etiqueta d
 row("t5.res_heightp", "Height tier (e.g. 1080p)", "Höhenstufe (z. B. 1080p)", "Por altura (p. ej. 1080p)", "Par hauteur (ex. 1080p)")
 row("t5.res_wxh", "Width × height", "Breite × Höhe", "Ancho × alto", "Largeur × hauteur")
 row(
+    "t5.ffprobe_resolution_hint",
+    "Resolution tag: common height labels (e.g. 1080p); for uncommon heights, width×height is used.",
+    "Auflösung: übliche Stufen wie 1080p; passt die Höhe in keine Stufe, wird Breite×Höhe verwendet.",
+    "Resolución: etiquetas por altura habituales (p. ej. 1080p); si la altura no encaja, se usa ancho×alto.",
+    "Résolution : libellés par hauteur courants (ex. 1080p) ; sinon largeur×hauteur.",
+)
+row(
     "t5.tag_slot_ph",
     "Tag {n} — word if checked",
     "Tag {n} — Wort wenn aktiv",
@@ -572,10 +659,10 @@ row(
 )
 row(
     "t5.tag_structure_hint",
-    "Optional layout idea — e.g. slot 1=[Action], 2=[Place], 3=[Time]; slots 4–5 for extras (studio, niche, …). Only checked slots appear; order in the file name is slot 1→5, then resolution and rating.",
-    "Optional: klare Struktur — z. B. Slot 1=[Action], 2=[Place], 3=[Time]; Slot 4–5 für Extras (Studio, Nische …). Nur angehakte Slots; Reihenfolge im Namen: Slot 1→5, danach Auflösung und Bewertung.",
-    "Idea opcional: ranura 1=[Action], 2=[Place], 3=[Time]; 4–5 extras. Solo ranuras marcadas; en el nombre: 1→5, luego resolución y valoración.",
-    "Option : structure claire — ex. emplacement 1=[Action], 2=[Place], 3=[Time] ; 4–5 en plus. Seules les cases cochées ; ordre dans le nom : 1→5, puis résolution et note.",
+    "Optional layout idea — e.g. slot 1=[Cat], 2=[Yard], 3=[Morning]; slots 4–5 for extras (Dog, notes, …). Only checked slots appear; order in the file name is slot 1→5, then resolution and rating.",
+    "Optional: klare Struktur — z. B. Slot 1=[Katze], 2=[Garten], 3=[Morgen]; Slot 4–5 für Extras (Hund, Notiz …). Nur angehakte Slots; Reihenfolge im Namen: Slot 1→5, danach Auflösung und Bewertung.",
+    "Idea opcional: ranura 1=[Gato], 2=[Jardín], 3=[Mañana]; 4–5 extras (perro, notas …). Solo ranuras marcadas; en el nombre: 1→5, luego resolución y valoración.",
+    "Option : structure claire — ex. emplacement 1=[Chat], 2=[Jardin], 3=[Matin] ; 4–5 en plus (chien, notes …). Seules les cases cochées ; ordre dans le nom : 1→5, puis résolution et note.",
 )
 row("t5.col.scene_title", "Scene title", "Szenentitel", "Título escena", "Titre scène")
 row("t5.col.scene_date", "Date (CSV)", "Datum (CSV)", "Fecha (CSV)", "Date (CSV)")

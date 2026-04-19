@@ -2,6 +2,9 @@
 """
 PyInstaller one-file, windowed (no console) bundle for Stashmarker.
 
+Tab 5 schema-rename help (the info dialog) is plain GUI + ``locales/*.json`` strings;
+no additional ``datas`` entries are required beyond the ``locales`` tree below.
+
 Run from repository root, e.g.:
   python -m PyInstaller --noconfirm packaging/stashmarker_onefile.spec
 
