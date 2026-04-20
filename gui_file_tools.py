@@ -21,6 +21,7 @@ from file_rename_tools import (
     append_schema_tags_to_leaf,
     apply_file_renames,
     undo_file_renames,
+    disambiguate_new_leaves_among_rows,
     apply_find_replace_to_rows,
     apply_prefix_suffix_to_rows,
     build_leaf_tags_only_mode,
@@ -33,6 +34,7 @@ from file_rename_tools import (
     ffprobe_video_size,
     filter_stub_for_subfolder_suggest,
     find_ffprobe_executable,
+    leaf_extension_from_row,
     move_files_only,
     read_rename_csv,
     rehydrate_leaf_stem_head_from_schema_row,
@@ -76,6 +78,7 @@ _FILTER_FIELD_KEYS_TAB34: tuple[str, ...] = (
     "all",
     "path",
     "name",
+    "file_extension",
     "new_leaf",
     "scene_title",
     "scene_tags",
@@ -172,6 +175,7 @@ class FileToolsApp(ctk.CTk):
         self._t3_replace = ctk.StringVar(value="")
         self._t3_replace_ci = ctk.BooleanVar(value=False)
         self._t3_dry = ctk.BooleanVar(value=True)
+        self._t3_rename_selected_only = ctk.BooleanVar(value=False)
         self._t3_edit_leaf = ctk.StringVar(value="")
 
         # Folder rename (dangerous)
@@ -309,6 +313,7 @@ class FileToolsApp(ctk.CTk):
         self._t3_replace = ctk.StringVar(value=self._t3_replace.get())
         self._t3_replace_ci = ctk.BooleanVar(value=self._t3_replace_ci.get())
         self._t3_dry = ctk.BooleanVar(value=self._t3_dry.get())
+        self._t3_rename_selected_only = ctk.BooleanVar(value=self._t3_rename_selected_only.get())
         self._t3_edit_leaf = ctk.StringVar(value=self._t3_edit_leaf.get())
         self._t3_fold_src = ctk.StringVar(value=self._t3_fold_src.get())
         self._t3_fold_new = ctk.StringVar(value=self._t3_fold_new.get())
@@ -1369,6 +1374,8 @@ class FileToolsApp(ctk.CTk):
 
         ent.bind("<KeyRelease>", push)
         ent.bind("<FocusOut>", push)
+        ent.bind("<<Paste>>", push)
+        ent.bind("<<Cut>>", push)
 
         def pull(_a: str = "", _b: str = "", _c: str = "") -> None:
             val = var.get()
@@ -1830,20 +1837,22 @@ class FileToolsApp(ctk.CTk):
         fr_row = ctk.CTkFrame(batch_body, fg_color=self._pal["panel"], height=32)
         fr_row.pack(fill="x", padx=10, pady=(0, 4))
         fr_row.pack_propagate(False)
-        self._ph_string_entry(
+        self._t3_find_entry = self._ph_string_entry(
             fr_row,
             self._t3_find,
             placeholder=self._tr("t3.ph.find"),
             width=150,
             height=28,
-        ).pack(side="left", padx=(0, 8))
-        self._ph_string_entry(
+        )
+        self._t3_find_entry.pack(side="left", padx=(0, 8))
+        self._t3_replace_entry = self._ph_string_entry(
             fr_row,
             self._t3_replace,
             placeholder=self._tr("t3.ph.replace"),
             width=150,
             height=28,
-        ).pack(side="left", padx=(0, 8))
+        )
+        self._t3_replace_entry.pack(side="left", padx=(0, 8))
         ctk.CTkCheckBox(
             fr_row,
             text=self._tr("t3.ignore_case"),
@@ -1908,7 +1917,7 @@ class FileToolsApp(ctk.CTk):
 
         self._tree = ttk.Treeview(
             tree_frame,
-            columns=("path", "path_gap", "name", "name_gap", "new_leaf"),
+            columns=("path", "path_gap", "name", "name_gap", "ext", "ext_gap", "new_leaf"),
             show="headings",
             height=14,
             selectmode="extended",
@@ -1917,24 +1926,34 @@ class FileToolsApp(ctk.CTk):
         self._tree.heading("path_gap", text=self._tr("t3.col.path_gap"))
         self._tree.heading("name", text=self._tr("t3.col.name"), command=lambda: self._toggle_sort_t3("name"))
         self._tree.heading("name_gap", text=self._tr("t3.col.path_gap"))
+        self._tree.heading("ext", text=self._tr("t3.col.ext"), command=lambda: self._toggle_sort_t3("ext"))
+        self._tree.heading("ext_gap", text=self._tr("t3.col.path_gap"))
         self._tree.heading(
             "new_leaf", text=self._tr("t3.col.new_leaf"), command=lambda: self._toggle_sort_t3("new_leaf")
         )
         self._tree.column("path", width=300, minwidth=80, stretch=False, anchor="w")
         self._tree.column("path_gap", width=16, minwidth=12, stretch=False, anchor="center")
-        self._tree.column("name", width=240, minwidth=70, stretch=False, anchor="w")
+        self._tree.column("name", width=220, minwidth=70, stretch=False, anchor="w")
         self._tree.column("name_gap", width=16, minwidth=12, stretch=False, anchor="center")
-        self._tree.column("new_leaf", width=300, minwidth=80, stretch=False, anchor="w")
+        self._tree.column("ext", width=72, minwidth=52, stretch=False, anchor="w")
+        self._tree.column("ext_gap", width=16, minwidth=12, stretch=False, anchor="center")
+        self._tree.column("new_leaf", width=280, minwidth=80, stretch=False, anchor="w")
         self._place_ttk_tree_with_scrollbars(tree_frame, self._tree)
         self._tree.bind("<<TreeviewSelect>>", self._t3_on_select)
         self._tree.bind("<Double-1>", lambda e: self._t3_focus_edit_leaf())
         self._tree.bind("<Button-3>", self._t3_tree_context_menu)
 
-        runf = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=36)
+        runf = ctk.CTkFrame(parent, fg_color=self._pal["panel"], height=40)
         runf.pack(fill="x", padx=10, pady=(0, 6))
         runf.pack_propagate(False)
         ctk.CTkCheckBox(
             runf, text=self._tr("t3.preview_only"), variable=self._t3_dry, **self._checkbox_kw()
+        ).pack(side="left", padx=(0, 12))
+        ctk.CTkCheckBox(
+            runf,
+            text=self._tr("t3.rename_selected_only"),
+            variable=self._t3_rename_selected_only,
+            **self._checkbox_kw(),
         ).pack(side="left", padx=(0, 12))
         ctk.CTkButton(
             runf,
@@ -2680,6 +2699,7 @@ class FileToolsApp(ctk.CTk):
             exc,
             file_path=row.get("file_path", ""),
             file_name=row.get("file_name", ""),
+            file_extension=leaf_extension_from_row(row),
             new_leaf=row.get("new_leaf", ""),
             scene_title=row.get("scene_title", ""),
             scene_tags=row.get("scene_tags", ""),
@@ -2746,6 +2766,8 @@ class FileToolsApp(ctk.CTk):
             return self._sort_key_text(row.get("file_path", ""))
         if col == "name":
             return self._sort_key_text(row.get("file_name", ""))
+        if col == "ext":
+            return self._sort_key_text(leaf_extension_from_row(row))
         if col == "new_leaf":
             return self._sort_key_text(row.get("new_leaf", ""))
         return self._sort_key_text(row.get("file_path", ""))
@@ -3491,6 +3513,7 @@ class FileToolsApp(ctk.CTk):
             exc,
             file_path=row.get("file_path", ""),
             file_name=row.get("file_name", ""),
+            file_extension=leaf_extension_from_row(row),
             new_leaf=row.get("new_leaf", ""),
             scene_title=row.get("scene_title", ""),
             scene_tags=row.get("scene_tags", ""),
@@ -3823,6 +3846,7 @@ class FileToolsApp(ctk.CTk):
             exc,
             file_path=row.get("file_path", ""),
             file_name=row.get("file_name", ""),
+            file_extension=leaf_extension_from_row(row),
             new_leaf=row.get("new_leaf", ""),
             scene_title=row.get("scene_title", ""),
             scene_tags=row.get("scene_tags", ""),
@@ -3849,6 +3873,8 @@ class FileToolsApp(ctk.CTk):
                         row.get("file_path", ""),
                         "",
                         row.get("file_name", ""),
+                        "",
+                        leaf_extension_from_row(row),
                         "",
                         row.get("new_leaf", ""),
                     ),
@@ -3928,6 +3954,110 @@ class FileToolsApp(ctk.CTk):
             self._log(self._tr("log.clipboard_fail"))
             return
         self._log(self._tr("log.copied_path"))
+
+    def _t3_selected_primary_leaf(self) -> str:
+        """Displayed / CSV file name for the first selected Tab 3 row (leaf only, no path)."""
+        idxs = self._t3_selected_indices()
+        if not idxs:
+            return ""
+        i = idxs[0]
+        if i < 0 or i >= len(self._rows):
+            return ""
+        row = self._rows[i]
+        fn = (row.get("file_name") or "").strip()
+        if fn:
+            return fn
+        fp = (row.get("file_path") or "").strip()
+        return Path(fp).name if fp else ""
+
+    def _t3_ph_entry_assign(self, ent: ctk.CTkEntry | None, var: ctk.StringVar, text: str, *, strip: bool) -> None:
+        """Write text into a placeholder-style CTkEntry and its StringVar (Find / Replace fields)."""
+        s = text.strip() if strip else text
+        var.set(s)
+        if ent is None:
+            return
+        try:
+            if not int(ent.winfo_exists()):
+                return
+            ent.delete(0, "end")
+            if s:
+                ent.insert(0, s)
+        except TclError:
+            pass
+
+    def _t3_copy_selected_file_name(self) -> None:
+        name = self._t3_selected_primary_leaf()
+        if not name:
+            self._log(self._tr("log.select_item"))
+            return
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(name)
+            self.update()
+        except TclError:
+            self._log(self._tr("log.clipboard_fail"))
+            return
+        self._log(self._tr("log.copied_file_name"))
+
+    def _t3_copy_selected_file_stem(self) -> None:
+        leaf = self._t3_selected_primary_leaf()
+        if not leaf:
+            self._log(self._tr("log.select_item"))
+            return
+        stem = Path(leaf).stem
+        if not stem:
+            self._log(self._tr("log.empty_stem"))
+            return
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(stem)
+            self.update()
+        except TclError:
+            self._log(self._tr("log.clipboard_fail"))
+            return
+        self._log(self._tr("log.copied_file_stem"))
+
+    def _t3_copy_selected_extension(self) -> None:
+        name = self._t3_selected_primary_leaf()
+        if not name:
+            self._log(self._tr("log.select_item"))
+            return
+        ext = Path(name).suffix
+        if not ext:
+            self._log(self._tr("log.no_extension"))
+            return
+        try:
+            self.clipboard_clear()
+            self.clipboard_append(ext)
+            self.update()
+        except TclError:
+            self._log(self._tr("log.clipboard_fail"))
+            return
+        self._log(self._tr("log.copied_extension"))
+
+    def _t3_put_selected_name_in_find(self) -> None:
+        leaf = self._t3_selected_primary_leaf()
+        if not leaf:
+            self._log(self._tr("log.select_item"))
+            return
+        stem = Path(leaf).stem
+        if not stem:
+            self._log(self._tr("log.empty_stem"))
+            return
+        self._t3_ph_entry_assign(getattr(self, "_t3_find_entry", None), self._t3_find, stem, strip=False)
+        self._save_settings()
+
+    def _t3_put_selected_name_in_replace(self) -> None:
+        leaf = self._t3_selected_primary_leaf()
+        if not leaf:
+            self._log(self._tr("log.select_item"))
+            return
+        stem = Path(leaf).stem
+        if not stem:
+            self._log(self._tr("log.empty_stem"))
+            return
+        self._t3_ph_entry_assign(getattr(self, "_t3_replace_entry", None), self._t3_replace, stem, strip=False)
+        self._save_settings()
 
     def _open_path_in_file_manager(self, fp: str) -> None:
         """Open folder or reveal file in Explorer / Finder / xdg-open (same rules as Tab 3)."""
@@ -4110,11 +4240,29 @@ class FileToolsApp(ctk.CTk):
             self._tree.focus(row_id)
         menu = Menu(self, tearoff=0)
         menu.add_command(label=self._tr("ctx.copy_folder_path"), command=self._t3_copy_selected_path)
+        menu.add_command(label=self._tr("ctx.copy_file_name"), command=self._t3_copy_selected_file_name)
+        menu.add_command(label=self._tr("ctx.copy_file_stem"), command=self._t3_copy_selected_file_stem)
+        menu.add_command(label=self._tr("ctx.copy_extension"), command=self._t3_copy_selected_extension)
+        menu.add_separator()
+        menu.add_command(label=self._tr("ctx.t3_name_to_find"), command=self._t3_put_selected_name_in_find)
+        menu.add_command(label=self._tr("ctx.t3_name_to_replace"), command=self._t3_put_selected_name_in_replace)
+        menu.add_separator()
         menu.add_command(label=self._tr("ctx.open_in_explorer"), command=self._t3_open_selected_path)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+
+    def _t3_note_rename_scope_after_batch(self, *, selected_scope: bool) -> None:
+        """Align «Rename on disk: selected rows only» with the last batch action (search vs selection)."""
+        self._t3_rename_selected_only.set(selected_scope)
+
+    def _t3_disambiguate_new_leaves(self) -> None:
+        n_ext, n_dis = disambiguate_new_leaves_among_rows(self._rows)
+        if n_ext:
+            self._log(self._tr("log.t3_ext_inherited", n=n_ext))
+        if n_dis:
+            self._log(self._tr("log.t3_disambiguate", n=n_dis))
 
     def _t3_apply_leaf_selection(self) -> None:
         sel_idx = self._t3_selected_indices()
@@ -4125,8 +4273,11 @@ class FileToolsApp(ctk.CTk):
         for i in sel_idx:
             if 0 <= i < len(self._rows):
                 self._rows[i]["new_leaf"] = val
+        self._t3_disambiguate_new_leaves()
+        self._t3_note_rename_scope_after_batch(selected_scope=True)
         self._t3_rebuild_tree()
         self._t3_restore_selection(sel_idx)
+        self._save_settings()
 
     def _t3_apply_rule_filtered(self) -> None:
         prefix = self._t3_prefix.get()
@@ -4142,7 +4293,10 @@ class FileToolsApp(ctk.CTk):
                 continue
         apply_prefix_suffix_to_rows(self._rows, indices, prefix=prefix, suffix_before_ext=suffix)
         self._log(self._tr("log.applied_prefix_search", n=len(indices)))
+        self._t3_disambiguate_new_leaves()
+        self._t3_note_rename_scope_after_batch(selected_scope=False)
         self._t3_rebuild_tree()
+        self._save_settings()
 
     def _t3_apply_rule_selected(self) -> None:
         prefix = self._t3_prefix.get()
@@ -4156,12 +4310,57 @@ class FileToolsApp(ctk.CTk):
             return
         apply_prefix_suffix_to_rows(self._rows, indices, prefix=prefix, suffix_before_ext=suffix)
         self._log(self._tr("log.applied_prefix_sel", n=len(indices)))
+        self._t3_disambiguate_new_leaves()
+        self._t3_note_rename_scope_after_batch(selected_scope=True)
         self._t3_rebuild_tree()
         self._t3_restore_selection(indices)
+        self._save_settings()
+
+    def _ctk_ph_entry_value(self, ent: ctk.CTkEntry | None, var: ctk.StringVar, *, strip: bool = True) -> str:
+        """
+        Reliable text from a CTkEntry used with ``placeholder_text`` but **without** ``textvariable``.
+
+        ``CTkEntry.get()`` returns ``\"\"`` while the grey placeholder is active, even though the
+        underlying ``tkinter.Entry`` still holds the placeholder string — so we read the inner
+        entry and treat a value equal to ``placeholder_text`` as empty.
+        """
+        def _finish(s: str) -> str:
+            return s.strip() if strip else s
+
+        if ent is None:
+            return _finish(var.get() or "")
+        try:
+            if not int(ent.winfo_exists()):
+                return _finish(var.get() or "")
+        except (TclError, ValueError):
+            return _finish(var.get() or "")
+        inner = getattr(ent, "_entry", None)
+        if inner is None:
+            return _finish(ent.get() or var.get() or "")
+        try:
+            raw = inner.get()
+        except TclError:
+            return _finish(var.get() or "")
+        ph = ent.cget("placeholder_text")
+        if ph is not None and raw == ph:
+            return ""
+        return _finish(raw)
+
+    def _t3_sync_find_replace_entries(self) -> None:
+        """Flush pending UI events, then copy Find/Replace widget text into StringVars."""
+        try:
+            self.update_idletasks()
+        except TclError:
+            pass
+        self._t3_find.set(self._ctk_ph_entry_value(getattr(self, "_t3_find_entry", None), self._t3_find, strip=False))
+        self._t3_replace.set(
+            self._ctk_ph_entry_value(getattr(self, "_t3_replace_entry", None), self._t3_replace, strip=False)
+        )
 
     def _t3_apply_find_replace_filtered(self) -> None:
+        self._t3_sync_find_replace_entries()
         find = self._t3_find.get()
-        if not find:
+        if not find.strip():
             self._log(self._tr("log.fr_find_empty"))
             return
         replace_with = self._t3_replace.get()
@@ -4191,12 +4390,17 @@ class FileToolsApp(ctk.CTk):
         self._log(
             self._tr("log.fr_applied_search", u=updated, skip=skip_part),
         )
+        if updated == 0 and skipped == 0 and indices:
+            self._log(self._tr("log.fr_zero_hits"))
+        self._t3_disambiguate_new_leaves()
+        self._t3_note_rename_scope_after_batch(selected_scope=False)
         self._t3_rebuild_tree()
         self._save_settings()
 
     def _t3_apply_find_replace_selected(self) -> None:
+        self._t3_sync_find_replace_entries()
         find = self._t3_find.get()
-        if not find:
+        if not find.strip():
             self._log(self._tr("log.fr_find_empty"))
             return
         replace_with = self._t3_replace.get()
@@ -4221,6 +4425,10 @@ class FileToolsApp(ctk.CTk):
         self._log(
             self._tr("log.fr_applied_sel", u=updated, skip=skip_part),
         )
+        if updated == 0 and skipped == 0 and indices:
+            self._log(self._tr("log.fr_zero_hits"))
+        self._t3_disambiguate_new_leaves()
+        self._t3_note_rename_scope_after_batch(selected_scope=True)
         self._t3_rebuild_tree()
         self._t3_restore_selection(indices)
         self._save_settings()
@@ -4245,11 +4453,18 @@ class FileToolsApp(ctk.CTk):
             pass
         only = self._t3_only_under.get().strip() or None
         dry = self._t3_dry.get()
+        only_idx: list[int] | None = None
+        if self._t3_rename_selected_only.get():
+            only_idx = self._t3_selected_indices()
+            if not only_idx:
+                self._log(self._tr("log.t3_rename_need_selection"))
+                return
         undo_rec: list[tuple[int, str, str, str]] = []
         try:
             renamed, skipped, lines = apply_file_renames(
                 self._rows,
                 only_under_folder=only,
+                only_indices=only_idx,
                 dry_run=dry,
                 keep_alive=self._tk_keepalive,
                 keep_alive_every=35,
@@ -4703,6 +4918,7 @@ class FileToolsApp(ctk.CTk):
             "t3_replace": self._t3_replace.get(),
             "t3_replace_ci": self._t3_replace_ci.get(),
             "t3_dry": self._t3_dry.get(),
+            "t3_rename_selected_only": self._t3_rename_selected_only.get(),
             "t4_csv": self._t4_csv.get(),
             "t4_filter": self._t4_filter.get(),
             "t4_filter_exclude": self._t4_filter_exclude.get(),
@@ -4797,6 +5013,7 @@ class FileToolsApp(ctk.CTk):
         g("t3_replace", self._t3_replace)
         g("t3_replace_ci", self._t3_replace_ci)
         g("t3_dry", self._t3_dry)
+        g("t3_rename_selected_only", self._t3_rename_selected_only)
         g("t4_csv", self._t4_csv)
         g("t4_filter", self._t4_filter)
         g("t4_filter_exclude", self._t4_filter_exclude)

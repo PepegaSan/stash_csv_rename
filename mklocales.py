@@ -184,6 +184,7 @@ row(
 row("filter.field.all", "All columns", "Alle Spalten", "Todas las columnas", "Toutes les colonnes")
 row("filter.field.path", "Path", "Pfad", "Ruta", "Chemin")
 row("filter.field.name", "File name", "Dateiname", "Nombre de archivo", "Nom de fichier")
+row("filter.field.file_extension", "Extension", "Endung", "Extensión", "Extension")
 row("filter.field.new_leaf", "New file name", "Neuer Dateiname", "Nuevo nombre", "Nouveau nom (col.)")
 row("filter.field.scene_title", "Scene title", "Szenentitel", "Título de escena", "Titre scène")
 row("filter.field.scene_tags", "Tags", "Tags", "Etiquetas", "Tags")
@@ -305,10 +306,10 @@ row("t2.run_scan", "Run disk scan", "Datenträger-Scan starten", "Escanear disco
 # Tab 3
 row(
     "t3.steps",
-    "Steps: 1) Load CSV  2) Search / exclude (column + AND/OR menus, comma-separated words)  3) Batch rules (expand section): new name, prefix/suffix, find/replace, folder limit  4) Preview only  5) Rename on disk.\nRight-click a list item for folder path / Explorer. Stash checks: Tab 1 (\u2699 Settings).",
-    "Schritte: 1) CSV laden  2) Suche / Ausschluss (Spalte + UND/ODER, Komma-getrennt)  3) Batch-Regeln (aufklappen): neuer Name, Präfix/Suffix, Suchen/Ersetzen, Ordnerlimit  4) Nur Vorschau  5) Umbenennen.\nRechtsklick auf einen Listeneintrag: Ordner / Explorer. Stash: Tab 1 (\u2699 Einstellungen).",
-    "Pasos: 1) CSV  2) Buscar / excluir (columna + Y/O, palabras con comas)  3) Reglas por lotes (desplegar)  4) Vista previa  5) Renombrar.\nClic derecho en un elemento: carpeta / Explorador. Stash: pestaña 1 (\u2699 Ajustes).",
-    "Étapes : 1) CSV  2) Recherche / exclusion (colonne + ET/OU, mots séparés par des virgules)  3) Règles groupées (section repliable)  4) Aperçu  5) Renommer.\nClic droit sur un élément : dossier / Explorateur. Stash : onglet 1 (\u2699 Réglages).",
+    "Steps: 1) Load CSV  2) Search / exclude (column + AND/OR menus, comma-separated words)  3) Batch rules (expand section): new name, prefix/suffix, find/replace, folder limit  4) Preview only  5) Rename on disk.\nMulti-select rows (Ctrl/Shift-click or drag): use Find/replace — selected items (or prefix/suffix on selected) so each file gets its own proposed name from that row. «Rename on disk: selected rows only» turns on after any «apply to selected» batch action and off after «apply to search matches»; change it before step 5 if you need a different scope.\nRight-click a list item for folder path / Explorer. Stash checks: Tab 1 (\u2699 Settings).",
+    "Schritte: 1) CSV laden  2) Suche / Ausschluss (Spalte + UND/ODER, Komma-getrennt)  3) Batch-Regeln (aufklappen): neuer Name, Präfix/Suffix, Suchen/Ersetzen, Ordnerlimit  4) Nur Vorschau  5) Umbenennen.\nMehrfachauswahl (Strg-/Umschalt-Klick oder ziehen): Suchen/Ersetzen auf «Auswahl» (oder Präfix/Suffix auf Auswahl) erzeugt pro Datei einen eigenen Vorschlagsnamen. «Umbenennen: nur Auswahl» schaltet sich nach jedem «Auf ausgewählte Einträge anwenden» ein und nach «Auf Suchtreffer anwenden» aus — vor Schritt 5 bei Bedarf manuell ändern.\nRechtsklick: Ordner / Explorer. Stash: Tab 1 (\u2699 Einstellungen).",
+    "Pasos: 1) CSV  2) Buscar / excluir (columna + Y/O, palabras con comas)  3) Reglas por lotes (desplegar)  4) Vista previa  5) Renombrar.\nSelección múltiple (Ctrl/Mayús o arrastrar): buscar/reemplazar en «selección» (o prefijo/sufijo en selección) propone un nombre distinto por fila. «Renombrar: solo selección» se activa tras «Aplicar a elementos seleccionados» y se desactiva tras «Aplicar a coincidencias»; ajústelo antes del paso 5 si hace falta.\nClic derecho: carpeta / Explorador. Stash: pestaña 1 (\u2699 Ajustes).",
+    "Étapes : 1) CSV  2) Recherche / exclusion (colonne + ET/OU, mots séparés par des virgules)  3) Règles groupées (section repliable)  4) Aperçu  5) Renommer.\nSélection multiple (Ctrl/Maj ou glisser) : rechercher/remplacer sur « sélection » (ou préfixe/suffixe sur sélection) construit un nom proposé par ligne. « Renommer : lignes sélectionnées » s’active après « Appliquer aux éléments sélectionnés » et se désactive après « Appliquer aux résultats de recherche » ; modifiez-la avant l’étape 5 si besoin.\nClic droit : dossier / Explorateur. Stash : onglet 1 (\u2699 Réglages).",
 )
 row(
     "t3.section_batch_title",
@@ -333,10 +334,10 @@ row(
 )
 row(
     "t3.tree_context_hint",
-    "Tip: right-click an item — copy folder path (no file name) or open in Explorer.",
-    "Tipp: Rechtsklick auf einen Eintrag — Ordnerpfad kopieren (ohne Dateiname) oder Explorer.",
-    "Consejo: clic derecho en un elemento — copiar carpeta (sin archivo) o Explorador.",
-    "Astuce : clic droit sur un élément — copier le dossier (sans fichier) ou l’Explorateur.",
+    "Tip: right-click — copy folder path, file name, extension, or open Explorer. Multi-select with Ctrl/Shift or drag for batch rules on «selected items».",
+    "Tipp: Rechtsklick — Ordnerpfad, Dateiname, Endung kopieren oder Explorer. Mehrfachauswahl mit Strg/Umschalt oder Ziehen für Batch auf «Auswahl».",
+    "Consejo: clic derecho — copiar carpeta, nombre, extensión o Explorador. Multiselección con Ctrl/Mayús o arrastrar para reglas en «selección».",
+    "Astuce : clic droit — copier dossier, nom, extension ou Explorateur. Multi-sélection (Ctrl/Maj ou glisser) pour les règles sur « sélection ».",
 )
 row("t3.save_csv", "Save CSV", "CSV speichern", "Guardar CSV", "Enregistrer CSV")
 row(
@@ -398,6 +399,7 @@ row(
 row("t3.col.path", "Full path", "Voller Pfad", "Ruta completa", "Chemin complet")
 row("t3.col.path_gap", "\u2502", "\u2502", "\u2502", "\u2502")
 row("t3.col.name", "Current file name", "Aktueller Dateiname", "Nombre de archivo actual", "Nom de fichier actuel")
+row("t3.col.ext", "Ext.", "Endung", "Ext.", "Ext.")
 row("t3.col.new_leaf", "New file name", "Neuer Dateiname", "Nuevo nombre de archivo", "Nouveau nom de fichier")
 row("t3.copy_folder", "Copy folder path", "Ordnerpfad kopieren", "Copiar ruta de carpeta", "Copier le chemin du dossier")
 row("t3.open_explorer", "Open in Explorer", "Im Explorer öffnen", "Abrir en el Explorador", "Ouvrir dans l’Explorateur")
@@ -410,13 +412,20 @@ row("t3.fr_search", "Find/replace — search matches", "Suchen/Ersetzen — Such
 row("t3.fr_selected", "Find/replace — selected items", "Suchen/Ersetzen — Auswahl", "Buscar/reemplazar — selección", "Rechercher/remplacer — sélection")
 row(
     "t3.fr_hint",
-    "If an item already has a new file name, find/replace uses that — you can click Apply repeatedly.",
-    "Wenn ein Eintrag schon einen neuen Dateinamen hat, nutzt Suchen/Ersetzen diesen — „Anwenden“ kann mehrfach geklickt werden.",
-    "Si un elemento ya tiene un nombre nuevo, buscar/reemplazar usa ese — puedes pulsar Aplicar varias veces.",
-    "Si un élément a déjà un nouveau nom, rechercher/remplacer part de celui-ci — vous pouvez cliquer Appliquer plusieurs fois.",
+    "Find/replace runs on **New file name** when your find text matches there (click Apply repeatedly to chain). If that column is filled but your find text is only in the **current file name**, the current name is used instead.",
+    "Suchen/Ersetzen nutzt **Neuer Dateiname**, wenn der Suchtext dort vorkommt (mehrfach „Anwenden“ = Kette). Steht dort schon Text, der Suchtext aber nur im **aktuellen Dateinamen**, wird von dort ersetzt.",
+    "Buscar/reemplazar usa **nuevo nombre** si ahí aparece el texto buscado (Aplicar varias veces encadena). Si esa columna tiene texto pero el buscado solo está en el **nombre actual**, se usa el nombre actual.",
+    "Rechercher/remplacer utilise **nouveau nom** si le texte y est trouvé (Appliquer plusieurs fois enchaîne). Si cette colonne a du texte mais le texte cherché n’est que dans le **nom actuel**, le nom actuel est pris.",
 )
 row("t3.limit_folder", "Limit to folder (optional)", "Auf Ordner beschränken (optional)", "Limitar a carpeta (opcional)", "Limiter au dossier (optionnel)")
 row("t3.preview_only", "Preview only (no changes on disk)", "Nur Vorschau (keine Änderungen auf der Festplatte)", "Solo vista previa (sin cambios en disco)", "Aperçu seulement (aucun changement sur disque)")
+row(
+    "t3.rename_selected_only",
+    "Rename on disk: selected rows only",
+    "Umbenennen: nur markierte Zeilen",
+    "Renombrar en disco: solo filas seleccionadas",
+    "Renommer sur disque : lignes sélectionnées seulement",
+)
 row("t3.rename_disk", "Rename files on disk", "Dateien auf der Festplatte umbenennen", "Renombrar archivos en disco", "Renommer les fichiers sur disque")
 row("t3.clear_new_names", 'Clear "New file name" on search matches', "„Neuer Dateiname“ bei Suchtreffern leeren", "Borrar «nuevo nombre» en coincidencias", "Effacer « nouveau nom » sur les résultats")
 row(
@@ -766,6 +775,35 @@ row(
 
 # Context menu (Tab 3 tree)
 row("ctx.copy_folder_path", "Copy folder path", "Ordnerpfad kopieren", "Copiar ruta de carpeta", "Copier le chemin du dossier")
+row("ctx.copy_file_name", "Copy file name", "Dateinamen kopieren", "Copiar nombre de archivo", "Copier le nom du fichier")
+row(
+    "ctx.copy_file_stem",
+    "Copy name without extension",
+    "Namen ohne Endung kopieren",
+    "Copiar nombre sin extensión",
+    "Copier le nom sans extension",
+)
+row(
+    "ctx.copy_extension",
+    "Copy extension only (e.g. .webm)",
+    "Nur Endung kopieren (z. B. .webm)",
+    "Copiar solo extensión (p. ej. .webm)",
+    "Copier l’extension seulement (ex. .webm)",
+)
+row(
+    "ctx.t3_name_to_find",
+    "Put file name (no extension) in Find",
+    "Dateiname ohne Endung in «Suchen»",
+    "Poner nombre sin extensión en Buscar",
+    "Mettre le nom (sans extension) dans Rechercher",
+)
+row(
+    "ctx.t3_name_to_replace",
+    "Put file name (no extension) in Replace",
+    "Dateiname ohne Endung in «Ersetzen durch»",
+    "Poner nombre sin extensión en Reemplazar por",
+    "Mettre le nom (sans extension) dans Remplacer par",
+)
 row("ctx.open_in_explorer", "Open in Explorer", "Im Explorer öffnen", "Abrir en el Explorador", "Ouvrir dans l’Explorateur")
 row(
     "ctx.t5_edit_scene_title",
@@ -929,6 +967,23 @@ row("log.save_failed", "Save failed: {e}\n", "Speichern fehlgeschlagen: {e}\n", 
 row("log.select_item_path", "Select an item that has a file path first.\n", "Zuerst einen Eintrag mit Dateipfad wählen.\n", "Seleccione un elemento con ruta de archivo.\n", "Sélectionnez d’abord un élément avec un chemin fichier.\n")
 row("log.clipboard_fail", "Clipboard unavailable.\n", "Zwischenablage nicht verfügbar.\n", "Portapapeles no disponible.\n", "Presse-papiers indisponible.\n")
 row("log.copied_path", "Copied folder path to clipboard.\n", "Ordnerpfad in Zwischenablage kopiert.\n", "Ruta de carpeta copiada.\n", "Chemin du dossier copié dans le presse-papiers.\n")
+row("log.copied_file_name", "Copied file name to clipboard.\n", "Dateiname in die Zwischenablage kopiert.\n", "Nombre de archivo copiado al portapapeles.\n", "Nom de fichier copié dans le presse-papiers.\n")
+row(
+    "log.copied_file_stem",
+    "Copied file name (no extension) to clipboard.\n",
+    "Dateinamen ohne Endung in die Zwischenablage kopiert.\n",
+    "Nombre sin extensión copiado al portapapeles.\n",
+    "Nom sans extension copié dans le presse-papiers.\n",
+)
+row("log.copied_extension", "Copied extension to clipboard.\n", "Dateiendung in die Zwischenablage kopiert.\n", "Extensión copiada al portapapeles.\n", "Extension copiée dans le presse-papiers.\n")
+row("log.no_extension", "That file name has no extension to copy.\n", "Dieser Dateiname hat keine Endung zum Kopieren.\n", "Ese nombre no tiene extensión para copiar.\n", "Ce nom n’a pas d’extension à copier.\n")
+row(
+    "log.empty_stem",
+    "Name-without-extension is empty — nothing copied.\n",
+    "Name ohne Endung ist leer — nichts kopiert.\n",
+    "El nombre sin extensión está vacío — no se copió nada.\n",
+    "Le nom sans extension est vide — rien n’a été copié.\n",
+)
 row("log.select_item", "Select an item first.\n", "Zuerst einen Eintrag wählen.\n", "Seleccione un elemento primero.\n", "Sélectionnez d’abord un élément.\n")
 row("log.path_semicolon", "Path contains \"; opening parent folder only.\n", "Pfad enthält \"; nur übergeordneten Ordner öffnen.\n", "La ruta contiene «;»; abriendo solo carpeta padre.\n", "Le chemin contient « ; » ; ouverture du dossier parent seulement.\n")
 row("log.path_not_found", "Path not found: {fp!r}\n", "Pfad nicht gefunden: {fp!r}\n", "Ruta no encontrada: {fp!r}\n", "Chemin introuvable : {fp!r}\n")
@@ -947,6 +1002,20 @@ row(
     "Präfix/Suffix auf {n} ausgewählte Einträge angewendet.\n",
     "Prefijo/sufijo aplicado a {n} seleccionados.\n",
     "Préfixe/suffixe appliqué à {n} éléments sélectionnés.\n",
+)
+row(
+    "log.t3_ext_inherited",
+    "Added the current file's extension to \"New file name\" on {n} row(s) where it was missing.\n",
+    "Bei {n} Zeile(n) wurde die fehlende Dateiendung vom aktuellen Dateinamen an „Neuer Dateiname“ angehängt.\n",
+    "Se añadió la extensión del archivo actual a «nuevo nombre» en {n} fila(s) donde faltaba.\n",
+    "Extension du fichier actuelle ajoutée au « nouveau nom » sur {n} ligne(s) lorsqu’elle manquait.\n",
+)
+row(
+    "log.t3_disambiguate",
+    "Adjusted \"New file name\" on {n} row(s) so no two files in the same folder would get the same new name (including names already on disk).\n",
+    "„Neuer Dateiname“ bei {n} Zeile(n) angepasst, damit im gleichen Ordner keine Namenskollision entsteht (inkl. schon vorhandener Dateien).\n",
+    "Se ajustó «nuevo nombre» en {n} fila(s) para evitar el mismo nombre en la misma carpeta (incl. nombres ya existentes).\n",
+    "« Nouveau nom » ajusté sur {n} ligne(s) pour éviter un doublon dans le même dossier (y compris noms déjà présents).\n",
 )
 row("log.fr_find_empty", "Find/replace: \"Find\" must not be empty.\n", "Suchen/Ersetzen: „Suchen“ darf nicht leer sein.\n", "Buscar/reemplazar: «Buscar» no puede estar vacío.\n", "Rechercher/remplacer : « Rechercher » ne doit pas être vide.\n")
 row(
@@ -971,6 +1040,13 @@ row(
     "Buscar/reemplazar: nuevo nombre en {u} elemento(s){skip} (selección).\n",
     "Rechercher/remplacer : nouveau nom sur {u} élément(s){skip} (sélection).\n",
 )
+row(
+    "log.fr_zero_hits",
+    "Find/replace: no matches in the current file name or in \"New file name\" (where filled). The Path column is not searched — use text that appears in those name columns, or clear \"New file name\" if it hides the text you want to match.\n",
+    "Suchen/Ersetzen: kein Treffer im aktuellen Dateinamen oder in „Neuer Dateiname“ (falls ausgefüllt). Die Pfad-Spalte wird nicht durchsucht — der Suchtext muss in diesen Namen vorkommen, oder „Neuer Dateiname“ leeren, falls er stört.\n",
+    "Buscar/reemplazar: sin coincidencias en el nombre actual ni en «nuevo nombre» (si hay). La columna de ruta no se busca — use texto que aparezca en esos nombres o vacíe «nuevo nombre» si bloquea.\n",
+    "Rechercher/remplacer : aucune occurrence dans le nom actuel ou le « nouveau nom » (s’il est rempli). La colonne chemin n’est pas prise en compte — utilisez du texte présent dans ces noms, ou videz « nouveau nom » s’il masque le texte.\n",
+)
 row("log.skip_invalid_suffix", ", skipped {n} invalid", ", {n} ungültige übersprungen", ", omitidos {n} no válidos", ", {n} invalides ignorés")
 row(
     "log.cleared_new_names",
@@ -978,6 +1054,13 @@ row(
     "„Neuer Dateiname“ bei Suchtreffern geleert.\n",
     "Borrado «nuevo nombre» en coincidencias.\n",
     "« Nouveau nom » effacé sur les résultats de recherche.\n",
+)
+row(
+    "log.t3_rename_need_selection",
+    "Tab 3: turn off «Rename on disk: selected rows only» or select one or more rows before renaming.\n",
+    "Tab 3: «Umbenennen: nur markierte Zeilen» deaktivieren oder Zeilen markieren, dann umbenennen.\n",
+    "Tab 3: desactive «Renombrar: solo selección» o seleccione filas antes de renombrar.\n",
+    "Tab 3 : décochez « Renommer : lignes sélectionnées » ou sélectionnez des lignes avant de renommer.\n",
 )
 row("log.load_csv_first", "Load a CSV first.\n", "Zuerst eine CSV laden.\n", "Cargue primero un CSV.\n", "Chargez d’abord un CSV.\n")
 row(

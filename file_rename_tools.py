@@ -16,6 +16,7 @@ from datetime import datetime
 import shutil
 import subprocess
 import unicodedata
+from collections import defaultdict
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
@@ -43,6 +44,7 @@ CSV_COLUMNS = (
     "file_path",
     "file_directory",
     "file_name",
+    "file_extension",
     "new_leaf",
     "scene_date",
     "scene_rating",
@@ -56,6 +58,7 @@ CSV_HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "scene_id": ("sceneid", "stash_scene_id", "stash_id"),
     "scene_title": ("scene title", "scenetitle", "stash_title", "title_stash", "title"),
     "new_leaf": ("new_filename", "new_name", "target_leaf"),
+    "file_extension": ("ext", "extension", "suffix", "file_ext"),
     "scene_date": ("date", "released", "scene_date_iso", "release_date"),
     "scene_rating": ("rating", "rating100", "stars"),
     "scene_tags": ("tags", "stash_tags", "tag_list"),
@@ -98,6 +101,8 @@ _FIELD_FILTER_PREFIXES: tuple[tuple[str, str], ...] = (
     ("proposed:", "proposed_leaf"),
     ("name:", "name"),
     ("file:", "name"),
+    ("extension:", "file_extension"),
+    ("ext:", "file_extension"),
     ("path:", "path"),
     ("new:", "new_leaf"),
     ("nl:", "new_leaf"),
@@ -115,6 +120,7 @@ _UI_FILTER_FIELDS: frozenset[str] = frozenset(
         "all",
         "path",
         "name",
+        "file_extension",
         "new_leaf",
         "scene_title",
         "scene_tags",
@@ -130,6 +136,7 @@ _FIELD_PREFIX_FOR_UI: dict[str, str | None] = {
     "all": None,
     "path": "path:",
     "name": "name:",
+    "file_extension": "ext:",
     "new_leaf": "new:",
     "scene_title": "title:",
     "scene_tags": "tags:",
@@ -288,6 +295,7 @@ def row_matches_search_filter(
     *,
     file_path: str = "",
     file_name: str = "",
+    file_extension: str = "",
     new_leaf: str = "",
     scene_title: str = "",
     scene_tags: str = "",
@@ -303,8 +311,9 @@ def row_matches_search_filter(
     - Semicolon (;): AND between parts.
     - OR between groups: ``|``, `` OR ``, ``§`` (e.g. Shift+3 DE), or ``>`` (e.g. Shift+. US; ``>`` key DE).
     - Those markers inside ``"quotes"`` stay literal.
-    - No prefix: part may match file_path, file_name, new_leaf, scene_title, tags, markers, scene_id, scene_date (any).
+    - No prefix: part may match file_path, file_name, extension, new_leaf, scene_title, tags, markers, scene_id, scene_date (any).
     - ``name:`` or ``file:`` — only the file name (leaf).
+    - ``ext:`` or ``extension:`` — only the file extension cell (e.g. ``.mp4``), from the current file name.
     - ``path:`` or ``folder:`` — only the full path.
     - ``new:`` or ``nl:`` — only the new file name column (often empty until you fill it).
     - ``title:`` — scene title from CSV if present, else the file name stem (extension stripped).
@@ -325,6 +334,9 @@ def row_matches_search_filter(
         return True
     fp_l = (file_path or "").lower()
     fn_l = (file_name or "").lower()
+    fe_l = (file_extension or "").lower()
+    if not fe_l and fn_l:
+        fe_l = Path(file_name).suffix.lower()
     nl_l = (new_leaf or "").lower()
     st_l = _effective_scene_title_for_search(file_name, scene_title).lower()
     tg_l = (scene_tags or "").lower()
@@ -343,6 +355,8 @@ def row_matches_search_filter(
             return t in fp_l
         if field == "name":
             return t in fn_l
+        if field == "file_extension":
+            return t in fe_l
         if field == "new_leaf":
             return t in nl_l
         if field == "scene_title":
@@ -357,10 +371,11 @@ def row_matches_search_filter(
             return t in sdt_l
         if field == "proposed_leaf":
             return t in prop_l
-        # Unqualified: match path, file name, new_leaf, scene_title, tags, markers, id, date (not proposed).
+        # Unqualified: match path, file name, extension, new_leaf, scene_title, tags, markers, id, date (not proposed).
         return (
             t in fp_l
             or t in fn_l
+            or t in fe_l
             or t in nl_l
             or t in st_l
             or t in tg_l
@@ -387,6 +402,7 @@ def row_passes_list_filters(
     *,
     file_path: str = "",
     file_name: str = "",
+    file_extension: str = "",
     new_leaf: str = "",
     scene_title: str = "",
     scene_tags: str = "",
@@ -402,6 +418,7 @@ def row_passes_list_filters(
     kw: dict[str, str] = {
         "file_path": file_path,
         "file_name": file_name,
+        "file_extension": file_extension,
         "new_leaf": new_leaf,
         "scene_title": scene_title,
         "scene_tags": scene_tags,
@@ -726,14 +743,25 @@ def resolve_csv_path_to_existing_file(fp: str) -> Optional[Path]:
     return None
 
 
+def leaf_extension_from_row(row: dict[str, str]) -> str:
+    """Return ``Path.suffix`` for the current file (from ``file_name``, else ``file_path``)."""
+    fn = (row.get("file_name") or "").strip()
+    if fn:
+        return Path(fn).suffix
+    fp = (row.get("file_path") or "").strip()
+    return Path(fp).suffix if fp else ""
+
+
 def csv_row_from_path(p: Path) -> dict[str, str]:
     p = p.resolve()
+    name = p.name
     return {
         "scene_id": "",
         "scene_title": "",
         "file_path": str(p),
         "file_directory": str(p.parent),
-        "file_name": p.name,
+        "file_name": name,
+        "file_extension": Path(name).suffix,
         "new_leaf": "",
         "scene_date": "",
         "scene_rating": "",
@@ -806,6 +834,7 @@ def write_rename_csv(path: Path, rows: list[dict[str, str]], delimiter: str) -> 
         w.writeheader()
         for r in rows:
             row = {k: (r.get(k) or "") for k in CSV_COLUMNS}
+            row["file_extension"] = leaf_extension_from_row(r)
             w.writerow(row)
 
 
@@ -822,20 +851,20 @@ def read_rename_csv(path: Path, delimiter: Optional[str] = None) -> tuple[list[d
         if not fp:
             continue
         p = Path(fp)
-        rows.append(
-            {
-                "scene_id": _coalesce_scene_id(norm),
-                "scene_title": _coalesce_norm_field(norm, "scene_title"),
-                "file_path": fp,
-                "file_directory": norm.get("file_directory", "") or str(p.parent),
-                "file_name": norm.get("file_name", "") or p.name,
-                "new_leaf": _coalesce_norm_field(norm, "new_leaf"),
-                "scene_date": _coalesce_norm_field(norm, "scene_date"),
-                "scene_rating": _coalesce_norm_field(norm, "scene_rating"),
-                "scene_tags": _coalesce_norm_field(norm, "scene_tags"),
-                "scene_markers": _coalesce_norm_field(norm, "scene_markers"),
-            }
-        )
+        built = {
+            "scene_id": _coalesce_scene_id(norm),
+            "scene_title": _coalesce_norm_field(norm, "scene_title"),
+            "file_path": fp,
+            "file_directory": norm.get("file_directory", "") or str(p.parent),
+            "file_name": norm.get("file_name", "") or p.name,
+            "new_leaf": _coalesce_norm_field(norm, "new_leaf"),
+            "scene_date": _coalesce_norm_field(norm, "scene_date"),
+            "scene_rating": _coalesce_norm_field(norm, "scene_rating"),
+            "scene_tags": _coalesce_norm_field(norm, "scene_tags"),
+            "scene_markers": _coalesce_norm_field(norm, "scene_markers"),
+        }
+        built["file_extension"] = leaf_extension_from_row(built)
+        rows.append(built)
     return rows, delimiter
 
 
@@ -852,6 +881,106 @@ def unique_leaf_in_dir(directory: Path, desired_leaf: str) -> str:
     return candidate
 
 
+def inherit_missing_extension(new_leaf: str, source_leaf: str) -> str:
+    """
+    If ``new_leaf`` has no ``Path.suffix``, append the suffix from ``source_leaf`` (the file on disk).
+
+    So ``VIDEO`` + ``clip.mp4`` -> ``VIDEO.mp4``. If the source has no extension, ``new_leaf`` is unchanged.
+    """
+    nl = new_leaf.strip()
+    if not nl or nl in (".", ".."):
+        return nl
+    if Path(nl).suffix:
+        return nl
+    ext = Path((source_leaf or "").strip()).suffix
+    if not ext:
+        return nl
+    return nl + ext
+
+
+def merge_new_leaf_missing_extensions(rows: list[dict[str, str]]) -> int:
+    """
+    For every row with a non-empty ``new_leaf`` that lacks a file extension, append the extension
+    from the row's current file name (or path). Returns how many cells were updated.
+    """
+    changed = 0
+    for i, row in enumerate(rows):
+        nl = (row.get("new_leaf") or "").strip()
+        if not nl:
+            continue
+        fp = (row.get("file_path") or "").strip()
+        cur = (row.get("file_name") or "").strip() or (Path(fp).name if fp else "")
+        if not cur:
+            continue
+        merged = inherit_missing_extension(nl, cur)
+        if merged != nl:
+            rows[i]["new_leaf"] = merged
+            changed += 1
+    return changed
+
+
+def disambiguate_new_leaves_among_rows(rows: list[dict[str, str]]) -> tuple[int, int]:
+    """
+    First appends a missing file extension from each row's current file name (see
+    :func:`merge_new_leaf_missing_extensions`). Then, after batch rules, many rows can share the
+    same ``new_leaf`` in one folder: adjust ``new_leaf`` in place so proposed names are unique
+    **per parent folder** among rows that actually rename, and do not collide with other paths
+    already in that folder (case-insensitive).
+
+    Returns ``(n_extension_merged, n_collision_resolved)``.
+    """
+    ext_merged = merge_new_leaf_missing_extensions(rows)
+    by_parent: dict[str, list[tuple[int, str, str]]] = defaultdict(list)
+    for i, row in enumerate(rows):
+        leaf = (row.get("new_leaf") or "").strip()
+        if not leaf:
+            continue
+        fp = (row.get("file_path") or "").strip()
+        if not fp:
+            continue
+        cur = (row.get("file_name") or "").strip() or Path(fp).name
+        if leaf == cur:
+            continue
+        try:
+            parent_s = str(Path(fp).expanduser().resolve(strict=False).parent)
+        except OSError:
+            parent_s = str(Path(fp).parent)
+        by_parent[parent_s].append((i, leaf, cur))
+
+    changed = 0
+    for parent_s, items in by_parent.items():
+        items.sort(key=lambda t: t[0])
+        parent = Path(parent_s)
+        occ: set[str] = set()
+        if parent.is_dir():
+            try:
+                occ = {p.name.casefold() for p in parent.iterdir()}
+            except OSError:
+                occ = set()
+
+        for i, desired, cur_name in items:
+            cur_cf = cur_name.casefold()
+            occ.discard(cur_cf)
+
+            p_des = Path(desired)
+            base = p_des.stem
+            ext = p_des.suffix
+            cand = desired
+            n = 0
+            cand_cf = cand.casefold()
+            while cand_cf in occ:
+                n += 1
+                cand = f"{base}_{n}{ext}"
+                cand_cf = cand.casefold()
+
+            if cand != desired:
+                rows[i]["new_leaf"] = cand
+                changed += 1
+            occ.add(cand_cf)
+
+    return ext_merged, changed
+
+
 def apply_file_renames(
     rows: list[dict[str, str]],
     *,
@@ -865,6 +994,8 @@ def apply_file_renames(
 ) -> tuple[int, int, list[str]]:
     """
     For each row with non-empty new_leaf different from file_name, rename on disk.
+    If ``new_leaf`` has no extension, the current file's extension is appended first (same rule as
+    :func:`inherit_missing_extension`).
     If ``only_indices`` is set, only those row indices are considered (e.g. Tab 5 selection).
     Optional ``keep_alive(step)`` is called from the GUI main thread every ``keep_alive_every``
     processed rows so the window stays responsive during long batches.
@@ -925,6 +1056,7 @@ def apply_file_renames(
             row["file_path"] = str(old_full)
             row["file_directory"] = str(old_full.parent)
             row["file_name"] = old_full.name
+            row["file_extension"] = old_full.suffix
 
             if root_filter is not None:
                 try:
@@ -934,14 +1066,17 @@ def apply_file_renames(
                     continue
 
             leaf = old_full.name
-            new_leaf = (row.get("new_leaf") or "").strip()
-            if not new_leaf:
+            new_leaf_raw = (row.get("new_leaf") or "").strip()
+            if not new_leaf_raw:
                 skipped += 1
                 continue
-            if any(sep in new_leaf for sep in "\\/:") or new_leaf in (".", ".."):
-                log.append(f"Skip (invalid new file name): {new_leaf!r}")
+            if any(sep in new_leaf_raw for sep in "\\/:") or new_leaf_raw in (".", ".."):
+                log.append(f"Skip (invalid new file name): {new_leaf_raw!r}")
                 skipped += 1
                 continue
+            new_leaf = inherit_missing_extension(new_leaf_raw, leaf)
+            if new_leaf != new_leaf_raw:
+                row["new_leaf"] = new_leaf
             if new_leaf == leaf:
                 skipped += 1
                 continue
@@ -966,9 +1101,10 @@ def apply_file_renames(
                 row["file_path"] = str(dest)
                 row["file_directory"] = str(dest.parent)
                 row["file_name"] = dest.name
+                row["file_extension"] = dest.suffix
                 row["new_leaf"] = ""
                 if undo_stack is not None:
-                    undo_stack.append((i, str(old_full), str(dest), new_leaf))
+                    undo_stack.append((i, str(old_full), str(dest), new_leaf_raw))
                 log.append(f"OK: {dest}")
                 renamed += 1
             except OSError as e:
@@ -1028,6 +1164,7 @@ def undo_file_renames(
         row["file_path"] = str(old_p)
         row["file_directory"] = str(old_p.parent)
         row["file_name"] = old_p.name
+        row["file_extension"] = old_p.suffix
         row["new_leaf"] = prev_leaf
         log.append(f"[undo] OK: {new_p} -> {old_p}\n")
         undone += 1
@@ -1067,6 +1204,33 @@ def replace_in_basename(
     return name.replace(find, replace_with)
 
 
+def _find_replace_source_leaf(
+    orig: str,
+    current_leaf: str,
+    find: str,
+    replace_with: str,
+    *,
+    case_insensitive: bool,
+) -> str:
+    """
+    Full file name string that find/replace runs on.
+
+    Prefer **new_leaf** when the find text matches there (repeat Apply chains edits).
+    If **new_leaf** is set but does not contain a match, fall back to **file_name** so text
+    the user sees in the current-name column still matches.
+    """
+    cur = (current_leaf or "").strip()
+    if not cur:
+        return orig
+    if not find:
+        return cur
+    if replace_in_basename(cur, find, replace_with, case_insensitive=case_insensitive) != cur:
+        return cur
+    if replace_in_basename(orig, find, replace_with, case_insensitive=case_insensitive) != orig:
+        return orig
+    return cur
+
+
 def apply_find_replace_to_rows(
     rows: list[dict[str, str]],
     indices: list[int],
@@ -1076,11 +1240,16 @@ def apply_find_replace_to_rows(
     case_insensitive: bool = False,
 ) -> tuple[int, int, list[str]]:
     """
-    Set ``new_leaf`` after find/replace on the **working** name: if ``new_leaf`` is already set,
-    that value is the source (so repeated Apply chains replacements); otherwise ``file_name``.
+    Set ``new_leaf`` after find/replace. The source string is chosen by
+    ``_find_replace_source_leaf`` (prefers ``new_leaf`` when the find text matches there,
+    otherwise ``file_name`` when that matches).
+
     If the result equals the original ``file_name``, ``new_leaf`` is cleared (no rename).
     Returns (rows_updated, rows_skipped_invalid, warning_lines).
     """
+    find = find or ""
+    if not find.strip():
+        return 0, 0, []
     warnings: list[str] = []
     updated = 0
     skipped = 0
@@ -1090,7 +1259,13 @@ def apply_find_replace_to_rows(
         row = rows[i]
         orig = row.get("file_name") or Path(row["file_path"]).name
         current_leaf = (row.get("new_leaf") or "").strip()
-        source = current_leaf if current_leaf else orig
+        source = _find_replace_source_leaf(
+            orig,
+            current_leaf,
+            find,
+            replace_with,
+            case_insensitive=case_insensitive,
+        )
         new = replace_in_basename(source, find, replace_with, case_insensitive=case_insensitive)
 
         if new == orig:
@@ -1301,6 +1476,7 @@ def move_files_only(
                 row["file_path"] = str(dest)
                 row["file_directory"] = str(dest.parent)
                 row["file_name"] = dest.name
+                row["file_extension"] = dest.suffix
                 row["new_leaf"] = ""
                 if undo_stack is not None:
                     undo_stack.append((i, str(old_full), str(dest), prev_new_leaf))

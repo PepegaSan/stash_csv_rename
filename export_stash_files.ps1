@@ -339,6 +339,7 @@ do {
             file_path   = $fp
             file_directory = if ($dir) { $dir } else { '' }
             file_name   = $leaf
+            file_extension = [System.IO.Path]::GetExtension($leaf)
             new_leaf    = ''
             scene_date  = $sd
             scene_rating = $sr
@@ -365,6 +366,7 @@ foreach ($r in $rows) {
         $r.file_path = $hit
         $r.file_directory = [System.IO.Path]::GetDirectoryName($hit)
         $r.file_name = [System.IO.Path]::GetFileName($hit)
+        $r.file_extension = [System.IO.Path]::GetExtension($r.file_name)
     }
 }
 if ($fixed -gt 0) {
@@ -376,7 +378,7 @@ if ($dirOut -and -not (Test-Path -LiteralPath $dirOut)) {
     New-Item -ItemType Directory -Path $dirOut -Force | Out-Null
 }
 
-$colNames = @('scene_id', 'scene_title', 'file_path', 'file_directory', 'file_name', 'new_leaf', 'scene_date', 'scene_rating', 'scene_tags', 'scene_markers')
+$colNames = @('scene_id', 'scene_title', 'file_path', 'file_directory', 'file_name', 'file_extension', 'new_leaf', 'scene_date', 'scene_rating', 'scene_tags', 'scene_markers')
 $outLines = New-Object System.Collections.Generic.List[string]
 $outLines.Add(($colNames -join $Delimiter))
 foreach ($r in $rows) {
