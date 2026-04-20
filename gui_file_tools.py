@@ -95,6 +95,8 @@ _TK_SHIFT_MASK = 0x0001
 _TK_CONTROL_MASK = 0x0004
 # Large Treeview fills: insert in chunks so the UI stays responsive with thousands of rows.
 _TTK_TREE_INSERT_BATCH = 350
+# Each successful Tab 3/4/5 disk batch appends one undo entry; oldest batches drop past this cap.
+_RENAME_UNDO_MAX_BATCHES = 32
 
 # Deepfake-style chrome (see theme_palette.py).
 BTN_RADIUS = 10
@@ -234,7 +236,7 @@ class FileToolsApp(ctk.CTk):
         self._t5_probe_busy = False
         self._t5_preset_menu: ctk.CTkOptionMenu | None = None
         self._t5_rebuild_after_id: str | None = None
-        self._rename_undo_stack: tuple[str, list[tuple[int, str, str, str]]] | None = None
+        self._rename_undo_batches: list[tuple[str, list[tuple[int, str, str, str]]]] = []
         self._header_undo_btn: ctk.CTkButton | None = None
         self._t3_sort_col = "path"
         self._t3_sort_desc = False
@@ -1094,7 +1096,7 @@ class FileToolsApp(ctk.CTk):
         self._save_settings()
 
     def _sync_header_undo_button(self) -> None:
-        ok = bool(self._rename_undo_stack and len(self._rename_undo_stack[1]) > 0)
+        ok = bool(self._rename_undo_batches)
         b = self._header_undo_btn
         if b is None:
             return
@@ -1106,21 +1108,21 @@ class FileToolsApp(ctk.CTk):
         b.configure(state="normal" if ok else "disabled")
 
     def _register_rename_undo_stack(self, tab: str, stack: list[tuple[int, str, str, str]]) -> None:
-        if stack:
-            self._rename_undo_stack = (tab, stack)
-        else:
-            self._rename_undo_stack = None
-        self._sync_header_undo_button()
-
-    def _clear_rename_undo_stack(self) -> None:
-        self._rename_undo_stack = None
+        if not stack:
+            self._sync_header_undo_button()
+            return
+        self._rename_undo_batches.append((tab, list(stack)))
+        over = len(self._rename_undo_batches) - _RENAME_UNDO_MAX_BATCHES
+        if over > 0:
+            del self._rename_undo_batches[:over]
+            self._log(self._tr("log.undo_stack_trimmed", n=over, max=_RENAME_UNDO_MAX_BATCHES))
         self._sync_header_undo_button()
 
     def _undo_last_disk_rename(self) -> None:
-        if not self._rename_undo_stack:
+        if not self._rename_undo_batches:
             self._log(self._tr("log.undo_rename_nothing"))
             return
-        tab, recs = self._rename_undo_stack
+        tab, recs = self._rename_undo_batches[-1]
         if tab == "t3":
             rows = self._rows
             dry = self._t3_dry.get()
@@ -1142,7 +1144,7 @@ class FileToolsApp(ctk.CTk):
             self._log(self._tr("log.undo_rename_done_preview", n=len(recs)))
         else:
             self._log(self._tr("log.undo_rename_done", n=n))
-            self._clear_rename_undo_stack()
+            self._rename_undo_batches.pop()
             if tab == "t3":
                 self._t3_rebuild_tree()
             elif tab == "t4":
@@ -1151,6 +1153,10 @@ class FileToolsApp(ctk.CTk):
             else:
                 self._t5_rebuild_tree()
             self._save_settings()
+            self._sync_header_undo_button()
+            m = len(self._rename_undo_batches)
+            if m:
+                self._log(self._tr("log.undo_rename_more_available", m=m))
 
     def _on_save_gui_settings_click(self) -> None:
         self._save_settings()

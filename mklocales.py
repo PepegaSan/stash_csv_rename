@@ -124,10 +124,10 @@ row(
 )
 row(
     "common.undo_header",
-    "Undo last disk action",
-    "Letzte Festplatten-Aktion rückgängig",
-    "Deshacer última acción en disco",
-    "Annuler la dernière action disque",
+    "Undo disk action (repeat)",
+    "Festplatten-Aktion rückgängig (mehrfach)",
+    "Deshacer acción en disco (repetir)",
+    "Annuler action disque (répéter)",
 )
 row("common.csv_file", "CSV file", "CSV-Datei", "Archivo CSV", "Fichier CSV")
 row("common.search", "Search", "Suche", "Buscar", "Recherche")
@@ -1201,6 +1201,20 @@ row(
     "Rückgängig-Vorschau: {n} Schritt(e) im Log (Festplatte unverändert — Vorschau aus, erneut rückgängig zum Anwenden).\n",
     "Vista previa de deshacer: {n} paso(s) en el registro (disco sin cambios — desactive la vista previa y repita).\n",
     "Aperçu d’annulation : {n} étape(s) dans le journal (disque inchangé — désactivez l’aperçu puis réessayez).\n",
+)
+row(
+    "log.undo_rename_more_available",
+    "{m} more disk action(s) can still be undone (header button).\n",
+    "Noch {m} Festplatten-Aktion(en) rückgängig machbar (Kopfzeilen-Button).\n",
+    "Aún se puede deshacer {m} acción(es) en disco (botón superior).\n",
+    "Encore {m} action(s) disque annulable(s) (bouton d’en-tête).\n",
+)
+row(
+    "log.undo_stack_trimmed",
+    "Undo history: dropped {n} oldest batch(es) (limit {max} disk actions kept in memory).\n",
+    "Rückgängig-Verlauf: {n} älteste Stapel verworfen (max. {max} Aktionen im Speicher).\n",
+    "Historial de deshacer: descartados {n} lote(s) antiguo(s) (límite {max} acciones en memoria).\n",
+    "Historique d’annulation : {n} lot(s) le/la plus vieux ignorés (limite {max} actions en mémoire).\n",
 )
 row(
     "log.t5_preset_save_fail",
