@@ -201,6 +201,8 @@ row("tab.2", "2 · Disk scan", "2 · Datenträger-Scan", "2 · Escaneo de disco"
 row("tab.3", "3 · Rename", "3 · Umbenennen", "3 · Renombrar", "3 · Renommer")
 row("tab.4", "4 · Move on disk", "4 · Auf Festplatte verschieben", "4 · Mover en disco", "4 · Déplacer sur disque")
 row("tab.5", "5 · Schema names", "5 · Schema-Namen", "5 · Nombres (esquema)", "5 · Noms (schéma)")
+row("tab.6", "6 · Name sync", "6 · Namensabgleich", "6 · Sincronizar nombres", "6 · Sync noms")
+row("tab.7", "7 · File sync", "7 · Datei-Sync", "7 · Sincronizar archivos", "7 · Sync fichiers")
 
 # Tab 1
 row(
@@ -706,8 +708,753 @@ row("t5.preset_name_ph", "new preset name", "Name für Voreinstellung", "nombre 
 row("t5.preset_save", "Save preset", "Voreinstellung speichern", "Guardar preajuste", "Enregistrer préréglage")
 row("t5.preset_delete", "Delete preset", "Voreinstellung löschen", "Borrar preajuste", "Supprimer préréglage")
 
+# Tab 6 — sync file names from a reference tree (size + extension; renames on target only)
+row("t6.heading", "Name sync (reference → local)", "Namensabgleich (Referenz → lokal)", "Sincronizar nombres (referencia → local)", "Sync noms (référence → local)")
+row(
+    "t6.intro",
+    "Match files by exact byte size and extension (optionally plus SHA-256 of the first 1 MiB). When exactly one source file and one target file share the same key, the target file is renamed in place to the source file’s name (same subfolder on the target). Nothing is copied, moved, or deleted. Optional: leave target files unchanged when their name already ends with Tab-5-style trailing “ [tag]” groups (schema tags). Turn off “Preview only” to apply renames.",
+    "Abgleich über exakte Dateigröße und Endung (optional plus SHA-256 der ersten 1 MiB). Gibt es genau eine Quell- und eine Zieldatei mit demselben Schlüssel, wird die Zieldatei vor Ort nach dem Namen der Quelldatei umbenannt (gleicher Unterordner auf dem Ziel). Es wird nichts kopiert, verschoben oder gelöscht. Optional: Zieldateien mit Tab-5-typischen angehängten „ [Tag]“-Gruppen nicht umbenennen. „Nur Vorschau“ deaktivieren, um umzubenennen.",
+    "Empareja por tamaño exacto en bytes y extensión (opcionalmente más SHA-256 del primer 1 MiB). Si hay exactamente un origen y un destino con la misma clave, el destino se renombra in situ al nombre del origen (misma subcarpeta). No se copia, mueve ni borra nada. Opcional: no renombrar destinos cuyo nombre ya termina en grupos “ [etiqueta]” al estilo de la pestaña 5. Desactiva “Solo vista previa” para aplicar.",
+    "Correspondance par taille exacte (octets) et extension (optionnellement + SHA-256 du premier 1 Mio). S’il y a exactement une source et une cible avec la même clé, la cible est renommée sur place comme la source (même sous-dossier). Aucune copie, déplacement ou suppression. Option : ne pas renommer les cibles dont le nom se termine déjà par des groupes « [balise] » comme à l’onglet 5. Désactivez « Aperçu seulement » pour appliquer.",
+)
+row(
+    "t6.source_dir",
+    "Source folder (renamed reference, e.g. backup drive)",
+    "Quellordner (Referenz mit neuen Namen, z. B. Backup)",
+    "Carpeta origen (referencia ya renombrada, p. ej. copia de seguridad)",
+    "Dossier source (référence déjà renommée, ex. sauvegarde)",
+)
+row(
+    "t6.target_dir",
+    "Target folder (old names; files here are renamed only)",
+    "Zielordner (alte Namen; hier wird nur umbenannt)",
+    "Carpeta destino (nombres antiguos; solo se renombra aquí)",
+    "Dossier cible (anciens noms ; renommage sur place seulement)",
+)
+row(
+    "t6.partial_hash",
+    "Include SHA-256 of first 1 MiB in match key (safer if many same-size files)",
+    "SHA-256 der ersten 1 MiB im Schlüssel (sicherer bei vielen gleich großen Dateien)",
+    "Incluir SHA-256 del primer 1 MiB en la clave (más seguro con muchos archivos del mismo tamaño)",
+    "Inclure le SHA-256 du premier 1 Mio dans la clé (plus sûr si beaucoup de fichiers identiques)",
+)
+row(
+    "t6.keep_bracket_tags",
+    "Do not rename targets that already end with Tab-5-style “ [tag]” suffixes",
+    "Ziele mit Tab-5-„ [Tag]“-Suffix am Dateinamen nicht umbenennen",
+    "No renombrar destinos que ya terminan en sufijos “ [etiqueta]” (estilo pestaña 5)",
+    "Ne pas renommer les cibles qui se terminent déjà par des suffixes « [balise] » (onglet 5)",
+)
+row("t6.run", "Scan & sync names", "Scannen & Namen abgleichen", "Escanear y sincronizar nombres", "Analyser et synchroniser les noms")
+row("t6.dlg_source", "Choose source folder", "Quellordner wählen", "Elegir carpeta origen", "Choisir le dossier source")
+row("t6.dlg_target", "Choose target folder", "Zielordner wählen", "Elegir carpeta destino", "Choisir le dossier cible")
+row(
+    "log.busy_t6",
+    "Tab 6: name sync already running — wait until it finishes.\n",
+    "Tab 6: Namensabgleich läuft bereits — bitte warten.\n",
+    "Tab 6: sincronización de nombres en curso — espere.\n",
+    "Tab 6 : synchronisation des noms déjà en cours — patientez.\n",
+)
+row(
+    "log.t6_header",
+    "Tab 6 — name sync (size + extension; renames on target only)\n",
+    "Tab 6 — Namensabgleich (Größe + Endung; nur Umbenennen im Ziel)\n",
+    "Tab 6 — sync de nombres (tamaño + extensión; solo renombrar en destino)\n",
+    "Tab 6 — sync noms (taille + extension ; renommage cible seulement)\n",
+)
+row(
+    "log.t6_need_paths",
+    "Tab 6: set both source and target folders.\n",
+    "Tab 6: Quell- und Zielordner angeben.\n",
+    "Tab 6: indique carpeta origen y destino.\n",
+    "Tab 6 : renseignez dossier source et dossier cible.\n",
+)
+row(
+    "log.t6_need_dirs",
+    "Tab 6: source and target must be existing folders.\n",
+    "Tab 6: Quelle und Ziel müssen vorhandene Ordner sein.\n",
+    "Tab 6: origen y destino deben ser carpetas existentes.\n",
+    "Tab 6 : la source et la cible doivent être des dossiers existants.\n",
+)
+row(
+    "log.t6_fail",
+    "Tab 6: name sync failed: {e}\n",
+    "Tab 6: Namensabgleich fehlgeschlagen: {e}\n",
+    "Tab 6: error en sync de nombres: {e}\n",
+    "Tab 6 : échec sync noms : {e}\n",
+)
+row("t6.undo", "Undo last name sync", "Letzten Namensabgleich rückgängig", "Deshacer último sync de nombres", "Annuler dernier sync noms")
+row(
+    "log.t6_undo_header",
+    "Tab 6 — undo last name-sync batch\n",
+    "Tab 6 — letzten Namensabgleich rückgängig\n",
+    "Tab 6 — deshacer último lote de sync de nombres\n",
+    "Tab 6 — annuler le dernier lot de sync noms\n",
+)
+row(
+    "log.t6_undo_nothing",
+    "Tab 6: nothing to undo — run a real name sync (preview off) first.\n",
+    "Tab 6: nichts rückgängig — zuerst echten Namensabgleich ausführen (Vorschau aus).\n",
+    "Tab 6: nada que deshacer — ejecute antes un sync real (sin vista previa).\n",
+    "Tab 6 : rien à annuler — lancez d’abord un sync réel (sans aperçu).\n",
+)
+row(
+    "log.t6_undo_done",
+    "Tab 6 undo: reverted {n} path(s) on disk.\n",
+    "Tab 6 Rückgängig: {n} Pfad/Pfade auf der Festplatte zurückgesetzt.\n",
+    "Tab 6 deshacer: {n} ruta(s) revertida(s) en el disco.\n",
+    "Tab 6 annulation : {n} chemin(s) restauré(s) sur le disque.\n",
+)
+row(
+    "log.t6_undo_done_preview",
+    "Tab 6 undo preview: {n} step(s) logged (disk unchanged — turn off preview and click Undo again to apply).\n",
+    "Tab 6 Rückgängig-Vorschau: {n} Schritt(e) im Log (Festplatte unverändert — Vorschau aus, erneut klicken).\n",
+    "Tab 6 vista previa deshacer: {n} paso(s) (disco sin cambios — desactive vista previa y repita).\n",
+    "Tab 6 aperçu annulation : {n} étape(s) (disque inchangé — désactivez l’aperçu puis réessayez).\n",
+)
+row(
+    "log.t6_undo_more",
+    "{m} more Tab 6 name-sync batch(es) can still be undone (Tab 6 button).\n",
+    "Noch {m} Namensabgleich-Stapel rückgängig machbar (Button in Tab 6).\n",
+    "Aún se puede deshacer {m} lote(s) de sync en tab 6.\n",
+    "Encore {m} lot(s) de sync (onglet 6) annulable(s).\n",
+)
+row(
+    "t6.dup_title",
+    "Duplicate / ambiguous matches (last run)",
+    "Duplikate / mehrdeutige Treffer (letzter Lauf)",
+    "Duplicados / coincidencias ambiguas (última ejecución)",
+    "Doublons / correspondances ambiguës (dernier lancement)",
+)
+row(
+    "t6.dup_hint",
+    "Rows with the same «Group» number are one collision cluster (same match fingerprint, not necessarily the same filename). «Match» shows size, extension, and optional hash prefix. «Path» is the full path on disk. «Which folder» = source tree vs target tree (the two paths at the top of Tab 6). Right-click: Explorer, Stash (Tab 1 URL + API), delete.",
+    "Gleiche «Gruppe» = eine Kollision (gleiches Abgleich-Merkmal, Dateiname kann trotzdem anders sein). «Merkmal» = Größe, Endung, ggf. Hash-Anfang. «Pfad» = voller Dateipfad. «Welcher Ordner» = Quell- vs. Zielbaum (die beiden Ordner oben). Rechtsklick: Explorer, Stash, Löschen.",
+    "Mismo «Grupo» = mismo choque (huella de coincidencia; el nombre puede diferir). «Coincidencia» = tamaño, extensión, hash opcional. «Ruta» completa. Clic derecho: Explorador, Stash, borrar.",
+    "Même « Groupe » = même collision (empreinte ; les noms peuvent différer). «Critère » = taille, extension, hash optionnel. Chemin complet. Clic droit : Explorateur, Stash, supprimer.",
+)
+row(
+    "t6.dup_path_explain",
+    "Tip: the list is sorted by group so related rows sit together. Same «Group» + same «Match» = same internal key the sync uses (bytes + extension [+ partial hash]).",
+    "Tipp: sortiert nach Gruppe — zusammengehörige Zeilen stehen direkt untereinander. Gleiche «Gruppe» + gleiches «Merkmal» = derselbe interne Schlüssel (Bytes + Endung [+ Hash]).",
+    "Consejo: ordenado por grupo; misma «Coincidencia» = misma clave interna.",
+    "Astuce : tri par groupe ; même « Critère » = même clé interne.",
+)
+row("t6.dup_col.group", "Group", "Gruppe", "Grupo", "Groupe")
+row(
+    "t6.dup_col.match",
+    "Match fingerprint",
+    "Abgleich-Merkmal",
+    "Huella de coincidencia",
+    "Critère de paire",
+)
+row("t6.dup_col.side", "Which folder", "Welcher Ordner", "Carpeta", "Dossier")
+row("t6.dup_col.reason", "Reason", "Grund", "Motivo", "Motif")
+row(
+    "t6.side_source",
+    "Source folder (above)",
+    "Quellordner (oben)",
+    "Carpeta origen (arriba)",
+    "Dossier source (haut)",
+)
+row(
+    "t6.side_target",
+    "Target folder (above)",
+    "Zielordner (oben)",
+    "Carpeta destino (arriba)",
+    "Dossier cible (haut)",
+)
+row(
+    "t6.dup_reason.group",
+    "Same size + ext. (and hash if enabled) as other file(s)",
+    "Gleiche Größe + Endung (ggf. Hash) wie andere Datei(en)",
+    "Mismo tamaño + ext. (y hash si aplica) que otro(s)",
+    "Même taille + ext. (et hash si activé) qu’un autre",
+)
+row(
+    "t6.dup_reason.multi_source",
+    "Several source files match this target key",
+    "Mehrere Quelldateien passen zu diesem Ziel-Schlüssel",
+    "Varios archivos origen coinciden con esta clave",
+    "Plusieurs sources correspondent à cette clé cible",
+)
+row(
+    "t6.ctx_delete_file",
+    "Delete file from disk…",
+    "Datei von der Festplatte löschen…",
+    "Borrar archivo del disco…",
+    "Supprimer le fichier du disque…",
+)
+row(
+    "t6.delete_confirm_title",
+    "Delete file(s)?",
+    "Datei(en) löschen?",
+    "¿Borrar archivo(s)?",
+    "Supprimer le(s) fichier(s) ?",
+)
+row(
+    "t6.delete_confirm_body",
+    "Permanently delete {n} selected file(s) from disk? This cannot be undone (except from the recycle bin if the OS keeps one).",
+    "{n} ausgewählte Datei(en) dauerhaft von der Festplatte löschen? Nur rückgängig falls der Papierkorb greift.",
+    "¿Borrar permanentemente {n} archivo(s)? Solo recuperable si la papelera del SO aplica.",
+    "Supprimer définitivement {n} fichier(s) ? Récupération possible seulement via la corbeille.",
+)
+row(
+    "t6.delete_confirm_body_preview",
+    "Preview only is on: show which of the {n} selected file(s) would be deleted — nothing will be removed from disk yet. Continue?",
+    "«Nur Vorschau» ist an: Es wird nur simuliert, welche der {n} Datei(en) gelöscht würden — noch nichts von der Festplatte. Fortfahren?",
+    "«Solo vista previa» activada: solo se mostrará qué {n} archivo(s) se borrarían; no se toca el disco. ¿Continuar?",
+    "«Aperçu seulement» est activé : affichage des {n} fichier(s) qui seraient supprimés — rien n’est encore effacé sur le disque. Continuer ?",
+)
+row(
+    "log.t6_dup_deleted",
+    "Tab 6: deleted {n} file(s) from disk.\n",
+    "Tab 6: {n} Datei(en) von der Festplatte gelöscht.\n",
+    "Tab 6: {n} archivo(s) borrado(s) del disco.\n",
+    "Tab 6 : {n} fichier(s) supprimé(s) du disque.\n",
+)
+row(
+    "log.t6_dup_delete_preview",
+    "Tab 6 [preview only]: no files deleted — {n} path(s) would be removed if preview is turned off.\n",
+    "Tab 6 [Nur Vorschau]: nichts gelöscht — {n} Pfad/Pfade würden ohne Vorschau entfernt.\n",
+    "Tab 6 [solo vista previa]: nada borrado — {n} ruta(s) se borrarían sin la vista previa.\n",
+    "Tab 6 [aperçu seulement] : rien supprimé — {n} chemin(s) le seraient sans l’aperçu.\n",
+)
+row(
+    "log.t6_dup_delete_preview_line",
+    "Tab 6 [preview] would delete: {path}\n",
+    "Tab 6 [Vorschau] würde löschen: {path}\n",
+    "Tab 6 [vista previa] borraría: {path}\n",
+    "Tab 6 [aperçu] supprimerait : {path}\n",
+)
+row(
+    "log.t6_dup_delete_fail",
+    "Tab 6: could not delete {path}: {e}\n",
+    "Tab 6: Löschen fehlgeschlagen {path}: {e}\n",
+    "Tab 6: no se pudo borrar {path}: {e}\n",
+    "Tab 6 : suppression impossible {path} : {e}\n",
+)
+row(
+    "log.t6_dup_delete_all_mirror",
+    "Tab 6: nothing deleted — all {n} selected path(s) belong to mirrored source/target pairs (same relative path under both roots).\n",
+    "Tab 6: nichts gelöscht — alle {n} markierten Pfade sind gespiegelte Quell-/Ziel-Paare (gleicher relativer Pfad unter beiden Wurzeln).\n",
+    "Tab 6: nada borrado: las {n} ruta(s) son pares espejo origen/destino (misma ruta relativa).\n",
+    "Tab 6 : rien supprimé — les {n} chemin(s) font partie de paires miroir source/cible (même chemin relatif).\n",
+)
+row(
+    "log.t6_dup_delete_skipped_mirror",
+    "Tab 6: {n} selected path(s) are mirrored (same relative path on source and target) and will not be deleted.\n",
+    "Tab 6: {n} Pfad(e) sind gespiegelt (gleicher relativer Pfad) und werden nicht gelöscht.\n",
+    "Tab 6: {n} ruta(s) espejadas; no se borrarán.\n",
+    "Tab 6 : {n} chemin(s) miroir — non supprimé(s).\n",
+)
+row(
+    "log.t6_stash_resolve_fail",
+    "Tab 6: could not resolve Stash scene for this path: {err}\n",
+    "Tab 6: keine Stash-Szene für diesen Pfad: {err}\n",
+    "Tab 6: no se encontró escena Stash para la ruta: {err}\n",
+    "Tab 6 : scène Stash introuvable pour ce chemin : {err}\n",
+)
+row(
+    "log.t6_stash_browser_fail",
+    "Tab 6: could not open browser: {e}\n",
+    "Tab 6: Browser konnte nicht geöffnet werden: {e}\n",
+    "Tab 6: no se pudo abrir el navegador: {e}\n",
+    "Tab 6 : impossible d’ouvrir le navigateur : {e}\n",
+)
+row(
+    "log.t6_stash_first_only",
+    "Tab 6: opened Stash for the first selected path only ({n} selected).\n",
+    "Tab 6: Stash nur für den ersten gewählten Pfad geöffnet ({n} markiert).\n",
+    "Tab 6: Stash solo para la primera ruta seleccionada ({n}).\n",
+    "Tab 6 : Stash ouvert pour le premier chemin seulement ({n} sélectionnés).\n",
+)
+row(
+    "log.t6_dup_many_explorer",
+    "Tab 6: opening Explorer for the first 8 of {n} selected paths.\n",
+    "Tab 6: Explorer für die ersten 8 von {n} Pfaden.\n",
+    "Tab 6: abriendo Explorador para los primeros 8 de {n}.\n",
+    "Tab 6 : Explorateur pour les 8 premiers chemins sur {n}.\n",
+)
+row(
+    "t6.dedupe_bar_hint",
+    "Bulk: in each «Group», delete extra copies (destructive). Same relative path under Source and Target roots is always kept on both sides so mirrors stay aligned. If «Prefer [tag] names» is checked, files with Tab-5-style trailing bracket tags in the leaf sort before others in that group; the three radio options then break ties (and apply alone when no file in the group has tags). Then confirm.",
+    "Mengenlöschung: pro «Gruppe» Überzählige löschen (irreversibel). Gleicher relativer Pfad unter Quell- und Zielordner bleibt immer auf beiden Seiten erhalten (Spiegel). Häkchen „[Tag]-Namen bevorzugen“: Dateien mit Tab-5-Suffix am Namensende stehen in der Gruppe vorne; die drei Radio-Optionen entscheiden bei Gleichstand (und allein, wenn niemand in der Gruppe Tags hat). Dann bestätigen.",
+    "Por «Grupo»: borrar copias sobrantes (destructivo). La misma ruta relativa bajo origen y destino siempre se conserva en ambos lados (espejo). Si marca «Preferir nombres con [etiqueta]», los archivos con sufijos entre corchetes (estilo pestaña 5) van primero en el grupo; los tres botones de opción desempatan (y bastan si nadie tiene tags). Confirme.",
+    "Par « Groupe » : supprimer les copies en trop (destructif). Le même chemin relatif sous source et cible est toujours conservé des deux côtés (miroir). Case « Préférer noms avec [balise] » : les fichiers avec suffixe crochets (onglet 5) passent avant les autres du groupe ; les trois options radio servent d’égalité (et seules si personne n’a de tags). Confirmez.",
+)
+row(
+    "t6.dedupe_keep_alpha",
+    "Keep: first path (A–Z)",
+    "Behalten: alphabetisch erster Pfad",
+    "Conservar: primera ruta (A-Z)",
+    "Conserver : premier chemin (A-Z)",
+)
+row(
+    "t6.dedupe_keep_source",
+    "Keep: prefer source tree",
+    "Behalten: bevorzugt Quellordner",
+    "Conservar: preferir carpeta origen",
+    "Conserver : préférer la source",
+)
+row(
+    "t6.dedupe_keep_target",
+    "Keep: prefer target tree",
+    "Behalten: bevorzugt Zielordner",
+    "Conservar: preferir carpeta destino",
+    "Conserver : préférer la cible",
+)
+row(
+    "t6.dedupe_tag_priority",
+    "Prefer files whose name ends with Tab-5-style “ [tag]” groups (then use the option below)",
+    "„[Tag]“-Namen bevorzugen (Tab 5-Suffix; Tiebreaker / ohne Tags = Option darunter)",
+    "Preferir archivos con sufijos “ [etiqueta]” estilo pestaña 5 (luego la opción de abajo)",
+    "Préférer les noms se terminant par des « [balise] » style onglet 5 (puis l’option ci-dessous)",
+)
+row(
+    "t6.dedupe_button",
+    "Delete extras in all groups…",
+    "Überzählige in allen Gruppen löschen…",
+    "Borrar extras en todos los grupos…",
+    "Supprimer les extras dans tous les groupes…",
+)
+row(
+    "t6.dedupe_confirm_title",
+    "Delete duplicate files?",
+    "Duplikat-Dateien löschen?",
+    "¿Borrar archivos duplicados?",
+    "Supprimer les fichiers en double ?",
+)
+row(
+    "t6.dedupe_confirm_body",
+    "This will permanently delete files on disk so that each of the {groups} duplicate group(s) keeps only one file ({files} delete(s) planned). Continue?",
+    "Es werden dauerhaft {files} Datei(en) gelöscht, sodass von {groups} Gruppe(n) jeweils nur eine Datei übrig bleibt. Fortfahren?",
+    "Se borrarán {files} archivo(s) para dejar un archivo por grupo ({groups} grupo(s)). ¿Continuar?",
+    "Suppression définitive de {files} fichier(s) pour ne garder qu’un fichier par groupe ({groups}). Continuer ?",
+)
+row(
+    "t6.dedupe_confirm_body_preview",
+    "Preview only is on: list which of the {files} file(s) would be deleted across {groups} group(s) — nothing removed from disk yet. Continue?",
+    "«Nur Vorschau» ist an: Auflistung der {files} Datei(en) in {groups} Gruppe(n), die ohne Vorschau gelöscht würden — Festplatte unverändert. Fortfahren?",
+    "«Solo vista previa»: se listarían los {files} archivo(s) en {groups} grupo(s); no se borra nada aún. ¿Continuar?",
+    "«Aperçu seulement» : liste des {files} fichier(s) sur {groups} groupe(s) qui seraient supprimés — disque intact pour l’instant. Continuer ?",
+)
+row(
+    "log.t6_dedupe_empty",
+    "Tab 6: duplicate list is empty — run scan & sync first.\n",
+    "Tab 6: Duplikatliste leer — zuerst Scannen & Abgleich ausführen.\n",
+    "Tab 6: lista de duplicados vacía — ejecute primero el análisis.\n",
+    "Tab 6 : liste des doublons vide — lancez d’abord l’analyse.\n",
+)
+row(
+    "log.t6_dedupe_nothing",
+    "Tab 6: nothing to bulk-delete (no extras, or only mirrored source/target pairs remain).\n",
+    "Tab 6: nichts zu löschen (keine Überzähligen, oder nur gespiegelte Quell-/Ziel-Paare).\n",
+    "Tab 6: nada que borrar en bloque (sin extras, o solo pares espejados origen/destino).\n",
+    "Tab 6 : rien à supprimer en masse (pas d’extras, ou seulement des paires miroir source/cible).\n",
+)
+row(
+    "log.t6_dedupe_need_roots",
+    "Tab 6 bulk dedupe: set both source and target folders (existing paths) so mirrored relative paths can be detected.\n",
+    "Tab 6 Mengenlöschung: Quell- und Zielordner müssen gesetzt und vorhanden sein, damit gespiegelte Pfade erkannt werden.\n",
+    "Tab 6: indique carpetas origen y destino existentes para detectar rutas espejo.\n",
+    "Tab 6 : définissez dossiers source et cible existants pour détecter les chemins miroir.\n",
+)
+row(
+    "log.t6_dedupe_done",
+    "Tab 6 bulk dedupe: deleted {deleted} of {planned} planned file(s) from disk.\n",
+    "Tab 6 Mengenlöschung: {deleted} von {planned} geplanten Datei(en) gelöscht.\n",
+    "Tab 6: borrados {deleted} de {planned} archivos previstos.\n",
+    "Tab 6 : {deleted} / {planned} fichiers supprimés.\n",
+)
+row(
+    "log.t6_dedupe_preview",
+    "Tab 6 [preview only]: bulk dedupe — no files deleted; {planned} path(s) would be removed if preview is turned off.\n",
+    "Tab 6 [Nur Vorschau]: Mengenlöschung — nichts gelöscht; {planned} Pfad/Pfade würden ohne Vorschau entfernt.\n",
+    "Tab 6 [solo vista previa]: nada borrado en bloque; {planned} ruta(s) sin vista previa.\n",
+    "Tab 6 [aperçu seulement] : rien supprimé en masse ; {planned} chemin(s) sans aperçu.\n",
+)
+row(
+    "log.t6_dedupe_preview_line",
+    "Tab 6 [preview] would delete: {path}\n",
+    "Tab 6 [Vorschau] würde löschen: {path}\n",
+    "Tab 6 [vista previa] borraría: {path}\n",
+    "Tab 6 [aperçu] supprimerait : {path}\n",
+)
+
+# Tab 7 — file sync: incremental update or full mirror
+row("t7.heading", "File sync (update or mirror)", "Datei-Sync (Aktualisieren oder Spiegeln)", "Sincronizar archivos (actualizar o espejo)", "Sync fichiers (mise à jour ou miroir)")
+row(
+    "t7.intro",
+    "Choose a mode, then run with or without preview. Update (incremental): copy missing files into the same relative paths under the target, and refresh files whose size or modification time differs from the source — nothing is deleted on the target. Mirror (exact clone): the target’s file tree is made to match the source — extra files under the target are removed, missing files are copied, and differing files are replaced. If a mirrored path cannot be used, new files may land in the target root with a disambiguated name. Source and target folders must not overlap.",
+    "Modus wählen, dann mit oder ohne Vorschau ausführen. Aktualisieren (inkrementell): fehlende Dateien unter dem gleichen relativen Pfad im Ziel anlegen; bei abweichender Größe oder Änderungszeit die Zieldatei von der Quelle überschreiben — im Ziel wird nichts gelöscht. Spiegeln (exakter Klon): der Zielbaum entspricht der Quelle — zusätzliche Dateien im Ziel werden entfernt, fehlende kopiert, abweichende ersetzt. Spiegelpfad unmöglich → neue Dateien ggf. im Zielroot mit eindeutigem Namen. Quell- und Zielordner dürfen sich nicht überlappen.",
+    "Elija modo y ejecute con o sin vista previa. Actualizar (incremental): copia rutas faltantes y sobrescribe si tamaño o fecha difieren — no borra en destino. Espejo (clon exacto): el destino queda igual que el origen — borra sobrantes en destino, copia faltantes y reemplaza distintos. Si falla la ruta espejo, nuevos archivos pueden ir a la raíz con nombre único. Origen y destino no deben solaparse.",
+    "Choisissez un mode, puis exécutez avec ou sans aperçu. Mise à jour (incrémentielle) : copie les chemins manquants et remplace si taille ou date diffère — aucune suppression côté cible. Miroir (clone exact) : la cible reproduit la source — supprime les fichiers en trop sous la cible, copie les manquants, remplace les différents. Chemin miroir impossible → nouveaux fichiers éventuellement à la racine avec nom unique. Source et cible ne doivent pas se chevaucher.",
+)
+row("t7.mode_label", "Mode", "Modus", "Modo", "Mode")
+row(
+    "t7.mode.update",
+    "Update (incremental — add & refresh, no deletes)",
+    "Aktualisieren (inkrementell — ergänzen & aktualisieren, kein Löschen)",
+    "Actualizar (incremental — añadir y refrescar, sin borrar)",
+    "Mise à jour (incrémentielle — ajouter / rafraîchir, sans suppression)",
+)
+row(
+    "t7.mode.mirror",
+    "Mirror (exact clone — match source, delete extras on target)",
+    "Spiegeln (exakter Klon — wie Quelle, Überzähliges im Ziel löschen)",
+    "Espejo (clon exacto — igual que origen, borrar extras en destino)",
+    "Miroir (clone exact — comme la source, supprime l’excédent sur la cible)",
+)
+row(
+    "t7.mode_hint",
+    "For files that already exist on both sides, refresh compares size and last-modified time only (not a full byte-by-byte compare).",
+    "„Aktualisieren“ und „Spiegeln“ vergleichen bei vorhandenen Dateien nur Größe und Änderungszeit (kein Byte-für-Byte-Vergleich).",
+    "Para archivos ya presentes, «Actualizar» y «Espejo» solo comparan tamaño y fecha de modificación (no todo el contenido).",
+    "Pour les fichiers déjà présents, « Mise à jour » et « Miroir » comparent taille et date de modification seulement (pas octet à octet).",
+)
+row(
+    "t7.source_dir",
+    "Source folder (copy from)",
+    "Quellordner (von hier kopieren)",
+    "Carpeta origen (copiar desde)",
+    "Dossier source (copier depuis)",
+)
+row(
+    "t7.target_dir",
+    "Target folder (copy into)",
+    "Zielordner (hierhin kopieren)",
+    "Carpeta destino (copiar aquí)",
+    "Dossier cible (copier ici)",
+)
+row("t7.run", "Scan & apply", "Scannen & Anwenden", "Escanear y aplicar", "Analyser et appliquer")
+row("t7.dlg_source", "Choose source folder", "Quellordner wählen", "Elegir carpeta origen", "Choisir le dossier source")
+row("t7.dlg_target", "Choose target folder", "Zielordner wählen", "Elegir carpeta destino", "Choisir le dossier cible")
+row("t7.undo", "Undo last copy batch", "Letzte Kopie rückgängig", "Deshacer último lote de copias", "Annuler dernier lot de copies")
+row(
+    "t7.undo_hint",
+    "Undo only removes files that this tool created in the last non-preview run; it does not restore mirror deletes or reverse overwrites.",
+    "Rückgängig löscht nur Dateien, die dieses Tool im letzten Lauf ohne Vorschau neu angelegt hat — keine Wiederherstellung nach Spiegel-Löschungen oder Überschreibungen.",
+    "Deshacer solo quita archivos nuevos creados por la herramienta en el último pase real; no restaura borrados del espejo ni sobrescrituras.",
+    "Annuler supprime seulement les fichiers que l’outil a créés au dernier passage réel ; pas de restauration après suppressions miroir ni après écrasements.",
+)
+row(
+    "t7.tree_title",
+    "Planned / last run (all operations)",
+    "Geplant / letzter Lauf (alle Schritte)",
+    "Planificado / última ejecución (todas las operaciones)",
+    "Prévu / dernier passage (toutes les opérations)",
+)
+row(
+    "t7.tree_hint",
+    "After «Scan & apply» (with or without preview), this list shows what would happen or what happened: source path, destination path, and status. Undo (toolbar) only applies to newly created files from the last real run — not to rows you remove here.",
+    "Nach «Scannen & Anwenden» (mit oder ohne Vorschau): Quelle, Ziel, Status. Die Toolbar «Rückgängig» gilt nur für neu angelegte Dateien des letzten echten Laufs — nicht für Zeilen, die Sie hier aus der Liste entfernen.",
+    "Tras «Escanear y aplicar» (con o sin vista previa): origen, destino, estado. El botón Deshacer solo afecta a archivos nuevos del último pase real.",
+    "Après «Analyser et appliquer» (avec ou sans aperçu) : source, destination, statut. Le bouton Annuler du bas ne concerne que les fichiers créés au dernier passage réel.",
+)
+row(
+    "t7.tree_sel_hint",
+    "Selection: Ctrl or Shift+click, or click-drag across rows (same as Tabs 3–5). With the mouse button held, drag near the top or bottom edge of the list to scroll quickly while extending the selection. Right-click: open the row’s primary path in Explorer, load source files into Tab 5 (schema rename), or delete that file from disk (the list updates).",
+    "Mehrfachauswahl: Strg- oder Umschalt+Klick oder mit gedrückter Maustaste über Zeilen ziehen (wie Tab 3–5). Mit gedrückter Taste am oberen oder unteren Listenrand ziehen — schnelles Scrollen während der Markierung. Rechtsklick: Explorer für den Hauptpfad der Zeile, Quellen in Tab 5 (Schema-Umbenennung) laden, oder Datei von der Festplatte löschen (Liste wird angepasst).",
+    "Selección: Ctrl o Mayús+clic, o arrastrar (igual pestañas 3–5). Con el botón pulsado, arrastre cerca del borde superior o inferior para desplazarse rápido. Clic derecho: Explorador, cargar orígenes en pestaña 5 (renombrado por esquema), o borrar archivo (se actualiza la lista).",
+    "Sélection : Ctrl ou Maj+clic, ou glisser (onglets 3–5). Bouton enfoncé près du bord haut ou bas : défilement rapide. Clic droit : Explorateur, charger les sources dans l’onglet 5 (renommage schéma), ou supprimer le fichier (liste mise à jour).",
+)
+row(
+    "t7.ctx_tab5",
+    "Load source files in Tab 5 (schema)…",
+    "Quellen in Tab 5 (Schema) laden…",
+    "Cargar orígenes en pestaña 5 (esquema)…",
+    "Charger les sources dans l’onglet 5 (schéma)…",
+)
+row(
+    "t7.tree_delete_confirm_title",
+    "Delete selected file(s)?",
+    "Markierte Datei(en) löschen?",
+    "¿Borrar archivos seleccionados?",
+    "Supprimer les fichiers sélectionnés ?",
+)
+row(
+    "t7.tree_delete_confirm_body",
+    "Permanently delete {n} file(s) from disk (the paths tied to the selected rows)? The list below updates; this is not the Tab 7 undo stack.",
+    "{n} Datei(en) dauerhaft löschen (Pfade der markierten Zeilen)? Die Liste unten wird angepasst; das ist nicht der Tab-7-Rückgängig-Stapel.",
+    "¿Borrar permanentemente {n} archivo(s)? La lista se actualiza; no es el historial Deshacer del tab 7.",
+    "Supprimer définitivement {n} fichier(s) ? La liste est mise à jour ; ce n’est pas la pile Annuler de l’onglet 7.",
+)
+row(
+    "t7.tree_delete_confirm_body_preview",
+    "Preview only is on: show which of the {n} file(s) would be deleted — nothing removed from disk; the list below stays unchanged. Continue?",
+    "«Nur Vorschau» ist an: Es wird nur simuliert, welche der {n} Datei(en) gelöscht würden — Festplatte und Liste unverändert. Fortfahren?",
+    "«Solo vista previa»: solo se muestra qué {n} archivo(s) se borrarían; disco y lista sin cambios. ¿Continuar?",
+    "«Aperçu seulement» : affichage des {n} fichier(s) qui seraient supprimés — disque et liste inchangés. Continuer ?",
+)
+row(
+    "log.t7_many_explorer",
+    "Tab 7: opening Explorer for the first 8 of {n} selected paths.\n",
+    "Tab 7: Explorer für die ersten 8 von {n} Pfaden.\n",
+    "Tab 7: abriendo Explorador para los primeros 8 de {n}.\n",
+    "Tab 7 : Explorateur pour les 8 premiers chemins sur {n}.\n",
+)
+row(
+    "log.t7_tree_deleted",
+    "Tab 7: deleted {n} file(s) from disk (list updated).\n",
+    "Tab 7: {n} Datei(en) von der Festplatte gelöscht (Liste aktualisiert).\n",
+    "Tab 7: {n} archivo(s) borrado(s) (lista actualizada).\n",
+    "Tab 7 : {n} fichier(s) supprimé(s) (liste mise à jour).\n",
+)
+row(
+    "log.t7_tree_delete_preview",
+    "Tab 7 [preview only]: no files deleted — {n} path(s) would be removed if preview is turned off.\n",
+    "Tab 7 [Nur Vorschau]: nichts gelöscht — {n} Pfad/Pfade würden ohne Vorschau entfernt.\n",
+    "Tab 7 [solo vista previa]: nada borrado — {n} ruta(s) sin vista previa.\n",
+    "Tab 7 [aperçu seulement] : rien supprimé — {n} chemin(s) sans aperçu.\n",
+)
+row(
+    "log.t7_tree_delete_preview_line",
+    "Tab 7 [preview] would delete: {path}\n",
+    "Tab 7 [Vorschau] würde löschen: {path}\n",
+    "Tab 7 [vista previa] borraría: {path}\n",
+    "Tab 7 [aperçu] supprimerait : {path}\n",
+)
+row(
+    "log.t7_tree_delete_fail",
+    "Tab 7: could not delete {path}: {e}\n",
+    "Tab 7: Löschen fehlgeschlagen {path}: {e}\n",
+    "Tab 7: no se pudo borrar {path}: {e}\n",
+    "Tab 7 : suppression impossible {path} : {e}\n",
+)
+row(
+    "log.t7_tab5_nothing",
+    "Tab 7 → Tab 5: nothing to load (pick rows with a source path that exists on disk as a regular file).\n",
+    "Tab 7 → Tab 5: nichts zu laden (Zeilen mit Quellpfad wählen, der auf der Festplatte als normale Datei existiert).\n",
+    "Tab 7 → pestaña 5: nada que cargar (filas con ruta de origen que exista como archivo).\n",
+    "Tab 7 → onglet 5 : rien à charger (lignes avec un chemin source existant comme fichier).\n",
+)
+row(
+    "log.t7_tab5_skipped",
+    "Tab 7 → Tab 5: skipped {n} path(s) (not a regular file on disk).\n",
+    "Tab 7 → Tab 5: {n} Pfad/Pfade übersprungen (keine normale Datei auf der Festplatte).\n",
+    "Tab 7 → pestaña 5: omitidas {n} ruta(s) (no son archivo en disco).\n",
+    "Tab 7 → onglet 5 : {n} chemin(s) ignoré(s) (pas un fichier ordinaire sur le disque).\n",
+)
+row(
+    "log.t7_tab5_write_fail",
+    "Tab 7 → Tab 5: could not write the buffer CSV: {e}\n",
+    "Tab 7 → Tab 5: Puffer-CSV konnte nicht geschrieben werden: {e}\n",
+    "Tab 7 → pestaña 5: no se pudo escribir el CSV temporal: {e}\n",
+    "Tab 7 → onglet 5 : écriture du CSV tampon impossible : {e}\n",
+)
+row(
+    "log.t7_tab5_loaded",
+    "Tab 7 → Tab 5: loaded {n} file row(s) into Tab 5 ({path}).\n",
+    "Tab 7 → Tab 5: {n} Dateizeile(n) in Tab 5 geladen ({path}).\n",
+    "Tab 7 → pestaña 5: cargadas {n} fila(s) de archivo ({path}).\n",
+    "Tab 7 → onglet 5 : {n} ligne(s) fichier chargée(s) ({path}).\n",
+)
+row("t7.col.dest", "Destination", "Ziel", "Destino", "Destination")
+row("t7.col.status", "Status", "Status", "Estado", "État")
+row("t7.status.dry_mirror", "Preview: mirrored path", "Vorschau: Spiegelpfad", "Vista previa: ruta espejo", "Aperçu : chemin miroir")
+row("t7.status.dry_fallback", "Preview: target root (fallback)", "Vorschau: Zielroot (Ausweich)", "Vista previa: raíz destino (reserva)", "Aperçu : racine cible (repli)")
+row("t7.status.copied", "Copied (mirrored path)", "Kopiert (Spiegelpfad)", "Copiado (ruta espejo)", "Copié (chemin miroir)")
+row("t7.status.copied_fallback", "Copied (target root)", "Kopiert (Zielroot)", "Copiado (raíz destino)", "Copié (racine cible)")
+row("t7.status.error", "Error", "Fehler", "Error", "Erreur")
+row("t7.status.dry_delete", "Preview: delete on target", "Vorschau: Löschen im Ziel", "Vista previa: borrar en destino", "Aperçu : suppression cible")
+row("t7.status.deleted", "Deleted on target", "Im Ziel gelöscht", "Borrado en destino", "Supprimé sur la cible")
+row("t7.status.error_delete", "Delete failed", "Löschen fehlgeschlagen", "Error al borrar", "Échec suppression")
+row("t7.status.dry_update", "Preview: refresh file", "Vorschau: Datei aktualisieren", "Vista previa: actualizar", "Aperçu : mise à jour fichier")
+row("t7.status.copied_update", "Refreshed (overwritten)", "Aktualisiert (überschrieben)", "Actualizado (sobrescrito)", "Rafraîchi (écrasé)")
+row("t7.status.error_update", "Refresh failed", "Aktualisieren fehlgeschlagen", "Error al actualizar", "Échec mise à jour")
+row(
+    "log.busy_t7",
+    "Tab 7: file sync already running — wait until it finishes.\n",
+    "Tab 7: Datei-Sync läuft bereits — bitte warten.\n",
+    "Tab 7: sincronización en curso — espere.\n",
+    "Tab 7 : sync fichiers déjà en cours — patientez.\n",
+)
+row(
+    "log.t7_header",
+    "Tab 7 — file sync (update or mirror)\n",
+    "Tab 7 — Datei-Sync (Aktualisieren oder Spiegeln)\n",
+    "Tab 7 — sync archivos (actualizar o espejo)\n",
+    "Tab 7 — sync fichiers (mise à jour ou miroir)\n",
+)
+row(
+    "log.t7_need_paths",
+    "Tab 7: set both source and target folders.\n",
+    "Tab 7: Quell- und Zielordner angeben.\n",
+    "Tab 7: indique origen y destino.\n",
+    "Tab 7 : renseignez source et cible.\n",
+)
+row(
+    "log.t7_need_dirs",
+    "Tab 7: source and target must be existing folders.\n",
+    "Tab 7: Quelle und Ziel müssen vorhandene Ordner sein.\n",
+    "Tab 7: origen y destino deben ser carpetas existentes.\n",
+    "Tab 7 : source et cible doivent être des dossiers existants.\n",
+)
+row(
+    "log.t7_overlap",
+    "Tab 7: source and target folders must not overlap or be the same (unsafe to walk and copy).\n",
+    "Tab 7: Quell- und Zielordner dürfen nicht identisch sein und nicht ineinander liegen (unsicher).\n",
+    "Tab 7: origen y destino no deben solaparse ni ser iguales.\n",
+    "Tab 7 : la source et la cible ne doivent pas se chevaucher ni être identiques.\n",
+)
+row(
+    "log.t7_fail",
+    "Tab 7: file sync failed: {e}\n",
+    "Tab 7: Datei-Sync fehlgeschlagen: {e}\n",
+    "Tab 7: error en sync: {e}\n",
+    "Tab 7 : échec sync : {e}\n",
+)
+row(
+    "log.t7_log_truncated",
+    "Tab 7: only the first {shown} operations are listed in the log below ({total} total); the result table still shows all rows.\n",
+    "Tab 7: im Protokoll nur die ersten {shown} von {total} Einträgen — die Ergebnistabelle zeigt alle Zeilen.\n",
+    "Tab 7: solo las primeras {shown} entradas en el registro ({total} en total); la tabla muestra todas.\n",
+    "Tab 7 : seules les {shown} premières lignes dans le journal ({total} au total) ; le tableau liste tout.\n",
+)
+row(
+    "log.t7_summary",
+    "Tab 7 summary — copy/new: {copied}, refresh (overwrite): {refreshed}, mirror deletes (target only): {deleted}, errors: {errors}.{suffix}\n",
+    "Tab 7 summary — copy/new: {copied}, refresh (overwrite): {refreshed}, mirror deletes (target only): {deleted}, errors: {errors}.{suffix}\n",
+    "Tab 7 summary — copy/new: {copied}, refresh (overwrite): {refreshed}, mirror deletes (target only): {deleted}, errors: {errors}.{suffix}\n",
+    "Tab 7 summary — copy/new: {copied}, refresh (overwrite): {refreshed}, mirror deletes (target only): {deleted}, errors: {errors}.{suffix}\n",
+)
+row(
+    "log.t7_nothing",
+    "Tab 7: nothing to do — trees already match the chosen mode (no missing copies, no refreshes, no mirror deletes).\n",
+    "Tab 7: nichts zu tun — für den gewählten Modus ist bereits alles abgeglichen.\n",
+    "Tab 7: nada que hacer — ya coincide con el modo elegido.\n",
+    "Tab 7 : rien à faire — déjà conforme au mode choisi.\n",
+)
+row(
+    "log.t7_line_dry_mirror",
+    "Tab 7 [dry] {src} -> {dest}\n",
+    "Tab 7 [Vorschau] {src} -> {dest}\n",
+    "Tab 7 [dry] {src} -> {dest}\n",
+    "Tab 7 [dry] {src} -> {dest}\n",
+)
+row(
+    "log.t7_line_dry_fallback",
+    "Tab 7 [dry, fallback] {src} -> {dest}\n",
+    "Tab 7 [Vorschau, Ausweich] {src} -> {dest}\n",
+    "Tab 7 [dry, reserva] {src} -> {dest}\n",
+    "Tab 7 [dry, repli] {src} -> {dest}\n",
+)
+row(
+    "log.t7_line_copied",
+    "Tab 7 copied: {src} -> {dest}\n",
+    "Tab 7 kopiert: {src} -> {dest}\n",
+    "Tab 7 copiado: {src} -> {dest}\n",
+    "Tab 7 copié : {src} -> {dest}\n",
+)
+row(
+    "log.t7_line_fallback",
+    "Tab 7 copied (fallback): {src} -> {dest}\n",
+    "Tab 7 kopiert (Ausweich): {src} -> {dest}\n",
+    "Tab 7 copiado (reserva): {src} -> {dest}\n",
+    "Tab 7 copié (repli) : {src} -> {dest}\n",
+)
+row(
+    "log.t7_line_error",
+    "Tab 7 error (not copied): {src} -> {dest}\n",
+    "Tab 7 Fehler (nicht kopiert): {src} -> {dest}\n",
+    "Tab 7 error (no copiado): {src} -> {dest}\n",
+    "Tab 7 erreur (non copié) : {src} -> {dest}\n",
+)
+row(
+    "log.t7_line_dry_delete",
+    "Tab 7 [dry, mirror] would delete: {path}\n",
+    "Tab 7 [Vorschau, Spiegeln] würde löschen: {path}\n",
+    "Tab 7 [dry, espejo] borraría: {path}\n",
+    "Tab 7 [dry, miroir] supprimerait : {path}\n",
+)
+row(
+    "log.t7_line_deleted",
+    "Tab 7 deleted (mirror): {path}\n",
+    "Tab 7 gelöscht (Spiegeln): {path}\n",
+    "Tab 7 borrado (espejo): {path}\n",
+    "Tab 7 supprimé (miroir) : {path}\n",
+)
+row(
+    "log.t7_line_error_delete",
+    "Tab 7 error (not deleted): {path}\n",
+    "Tab 7 Fehler (nicht gelöscht): {path}\n",
+    "Tab 7 error (no borrado): {path}\n",
+    "Tab 7 erreur (non supprimé) : {path}\n",
+)
+row(
+    "log.t7_line_dry_update",
+    "Tab 7 [dry] would refresh: {src} -> {dest}\n",
+    "Tab 7 [Vorschau] würde aktualisieren: {src} -> {dest}\n",
+    "Tab 7 [dry] actualizaría: {src} -> {dest}\n",
+    "Tab 7 [dry] mettrait à jour : {src} -> {dest}\n",
+)
+row(
+    "log.t7_line_copied_update",
+    "Tab 7 refreshed: {src} -> {dest}\n",
+    "Tab 7 aktualisiert: {src} -> {dest}\n",
+    "Tab 7 actualizado: {src} -> {dest}\n",
+    "Tab 7 rafraîchi : {src} -> {dest}\n",
+)
+row(
+    "log.t7_line_error_update",
+    "Tab 7 error (not refreshed): {src} -> {dest}\n",
+    "Tab 7 Fehler (nicht aktualisiert): {src} -> {dest}\n",
+    "Tab 7 error (no actualizado): {src} -> {dest}\n",
+    "Tab 7 erreur (non mis à jour) : {src} -> {dest}\n",
+)
+row(
+    "log.t7_undo_nothing",
+    "Tab 7: nothing to undo — run a real copy (preview off) first.\n",
+    "Tab 7: nichts rückgängig — zuerst echte Kopie ausführen (Vorschau aus).\n",
+    "Tab 7: nada que deshacer — ejecute antes una copia real.\n",
+    "Tab 7 : rien à annuler — lancez d’abord une copie réelle.\n",
+)
+row(
+    "t7.undo_confirm_title",
+    "Delete copied files?",
+    "Kopierte Dateien löschen?",
+    "¿Borrar archivos copiados?",
+    "Supprimer les fichiers copiés ?",
+)
+row(
+    "t7.undo_confirm_body",
+    "Permanently delete the {n} file(s) from the last Tab 7 copy batch from disk? Folders created empty may remain.",
+    "Die {n} Datei(en) aus dem letzten Tab-7-Kopiervorgang dauerhaft löschen? Leere angelegte Ordner können bleiben.",
+    "¿Borrar permanentemente los {n} archivo(s) del último lote de copia de la pestaña 7? Pueden quedar carpetas vacías.",
+    "Supprimer définitivement les {n} fichier(s) du dernier lot de copies (onglet 7) ? Des dossiers vides peuvent rester.",
+)
+row(
+    "log.t7_undo_header",
+    "Tab 7 — undo last copy batch\n",
+    "Tab 7 — letzte Kopie rückgängig\n",
+    "Tab 7 — deshacer último lote de copias\n",
+    "Tab 7 — annuler dernier lot de copies\n",
+)
+row(
+    "log.t7_undo_done",
+    "Tab 7 undo: deleted {n} file(s) from disk.\n",
+    "Tab 7 Rückgängig: {n} Datei(en) von der Festplatte gelöscht.\n",
+    "Tab 7 deshacer: {n} archivo(s) borrado(s).\n",
+    "Tab 7 annulation : {n} fichier(s) supprimé(s).\n",
+)
+row(
+    "log.t7_undo_fail",
+    "Tab 7 undo: could not delete {path}: {e}\n",
+    "Tab 7 Rückgängig: Löschen fehlgeschlagen {path}: {e}\n",
+    "Tab 7 deshacer: no se pudo borrar {path}: {e}\n",
+    "Tab 7 annulation : suppression impossible {path} : {e}\n",
+)
+
 # Settings
 row("settings.title", "Settings", "Einstellungen", "Ajustes", "Réglages")
+row(
+    "settings.version_caption",
+    "Version {version}",
+    "Version {version}",
+    "Versión {version}",
+    "Version {version}",
+)
 row(
     "settings.intro",
     "These options apply across all tabs.",

@@ -1566,6 +1566,84 @@ query ProbeCsvExport($filter: FindFilterType) {
     )
 
 
+def _stash_path_lookup_candidates(local_path: str) -> list[str]:
+    """Return distinct path strings to try against Stash ``SceneFilterType.path`` (OS quirks)."""
+    raw = (local_path or "").strip()
+    if not raw:
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for cand in (raw, os.path.normpath(raw)):
+        if cand and cand not in seen:
+            seen.add(cand)
+            out.append(cand)
+    try:
+        rp = str(Path(raw).expanduser().resolve(strict=False))
+        if rp and rp not in seen:
+            seen.add(rp)
+            out.append(rp)
+        ps = Path(rp).as_posix()
+        if ps and ps not in seen:
+            seen.add(ps)
+            out.append(ps)
+    except OSError:
+        pass
+    return out
+
+
+def stash_resolve_scene_id_for_local_path(
+    stash_url: str,
+    api_key: str,
+    graphql_path: str,
+    local_path: str,
+    *,
+    timeout_sec: int = 25,
+) -> tuple[Optional[str], str]:
+    """
+    Best-effort: find a Stash scene id whose path filter matches ``local_path``.
+
+    Uses ``findScenes`` with ``scene_filter.path`` (Stash GraphQL). Tries several path spellings
+    (native, normalized, resolved, forward slashes). Returns ``(scene_id, "")`` or ``(None, reason)``.
+    """
+    q = """
+query Tab6FindSceneByPath($filter: FindFilterType!, $sceneFilter: SceneFilterType!) {
+  findScenes(filter: $filter, scene_filter: $sceneFilter) {
+    count
+    scenes { id }
+  }
+}
+""".strip()
+    for path_val in _stash_path_lookup_candidates(local_path):
+        for modifier in ("EQUALS", "INCLUDES"):
+            payload = {
+                "query": q,
+                "variables": {
+                    "filter": {"per_page": 10, "page": 1},
+                    "sceneFilter": {"path": {"value": path_val, "modifier": modifier}},
+                },
+            }
+            parsed, err = _stash_graphql_json(
+                stash_url, api_key, graphql_path, payload, timeout_sec=timeout_sec
+            )
+            if parsed is None:
+                return None, err or "GraphQL request failed"
+            if err:
+                # Wrong schema / unsupported argument — stop trying variants.
+                return None, err
+            data = parsed.get("data") if isinstance(parsed, dict) else None
+            if not isinstance(data, dict):
+                continue
+            fs = data.get("findScenes")
+            if not isinstance(fs, dict):
+                continue
+            scenes = fs.get("scenes")
+            if isinstance(scenes, list) and scenes:
+                sid = scenes[0].get("id") if isinstance(scenes[0], dict) else None
+                if sid is not None and str(sid).strip():
+                    return str(sid).strip(), ""
+    return None, "No scene matched this path in Stash (path filter / library path may differ)."
+
+
 def find_ffprobe_executable() -> Optional[str]:
     return shutil.which("ffprobe")
 
@@ -2132,6 +2210,20 @@ def split_stem_trailing_bracket_groups(stem: str) -> tuple[str, str]:
         return stem, ""
     tail = "".join(reversed(chunks_rev))
     return s.rstrip(), tail
+
+
+def leaf_has_trailing_bracket_tag_suffix(leaf: str) -> bool:
+    """
+    True if ``leaf`` ends with Tab-5-style trailing `` [tag]`` groups (same parse as
+    ``split_stem_trailing_bracket_groups``), including optional ``]_N`` copy markers between tags.
+    """
+    leaf = (leaf or "").strip()
+    if not leaf or any(c in leaf for c in '\\/:*?"<>|'):
+        return False
+    ext = Path(leaf).suffix
+    stem = leaf[: -len(ext)] if ext else leaf
+    _head, tail = split_stem_trailing_bracket_groups(stem)
+    return bool((tail or "").strip())
 
 
 def rehydrate_leaf_stem_head_from_schema_row(row: dict[str, str], leaf: str) -> tuple[str, str]:

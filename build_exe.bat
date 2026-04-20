@@ -5,6 +5,8 @@ cd /d "%~dp0"
 title Stashmarker — build one-file Windows .exe
 
 echo Build Stashmarker.exe (PyInstaller, one-file, no console window)
+for /f "delims=" %%V in ('python -c "from app_version import APP_VERSION; print(APP_VERSION)" 2^>nul') do set "SM_VER=%%V"
+if defined SM_VER echo Release version: %SM_VER%  (set in app_version.py^)
 echo Spec: "%~dp0packaging\stashmarker_onefile.spec"
 echo Output: "%~dp0dist\Stashmarker.exe"
 echo Bundled with the exe: locales\, themes\, export_stash_files.ps1, CustomTkinter assets — Tab 5 help ^(info dialog^) uses the same locale JSON; no extra datas.

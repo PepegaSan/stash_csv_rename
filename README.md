@@ -24,6 +24,12 @@ Sidebar navigation, status line, and **⚙ Settings** (language, theme, CSV sepa
 - **Start the app:** **`start_file_tools.bat`** (runs `python gui_file_tools.py` from this folder) or run `python gui_file_tools.py` yourself after installing dependencies.
 - **Optional for Tab 5 resolution:** install **FFmpeg** and ensure **`ffprobe`** is on **`PATH`**.
 
+### Versioning and releases
+
+- **Version string:** edit **`app_version.py`** (`APP_VERSION`). That value appears in the **window title** (after the translated app name), in **Settings**, and in the **GitHub Actions** artifact name (`Stashmarker-<version>-Windows`).
+- **Ship a build:** run **`build_exe.bat`**, then attach **`dist/Stashmarker.exe`** to a GitHub Release (or distribute it directly). Maintainers can use **Actions → “Build Windows exe”** to download the versioned artifact without a local PyInstaller install.
+- After changing **`mklocales.py`**, run **`python mklocales.py`** before tagging a release so **`locales/*.json`** stay in sync.
+
 ### Build the Windows `.exe` (optional)
 
 There is **no guaranteed pre-built binary in this repo** (GitHub Releases are optional). To build **`Stashmarker.exe`** yourself:
@@ -31,8 +37,6 @@ There is **no guaranteed pre-built binary in this repo** (GitHub Releases are op
 1. Install **Python 3.10+** and ensure **`python`** is on **`PATH`**.
 2. Run **`build_exe.bat`** in the repository root. It installs **`requirements.txt`** and **`requirements-build.txt`**, then runs **PyInstaller** with **`packaging\stashmarker_onefile.spec`** and writes **`dist\Stashmarker.exe`** (one-file bundle, **no console window** — windowed GUI only).
 3. Copy **`Stashmarker.exe`** wherever you like. On first run it creates **`gui_file_tools_settings.json`**, **`schema_rename_presets.json`**, and **`file_tools_csv\`** next to the `.exe` (same behaviour as running from source, where those files are created next to the script or project folder depending on how you launch). The export script **`export_stash_files.ps1`** is **inside** the `.exe`; if your settings file still points to an old path from a dev install, the app resets Tab 1 to the bundled script when that path is missing.
-
-Maintainers can use **Actions → “Build Windows exe”** (workflow dispatch) to produce a downloadable **artifact** without a local PyInstaller install.
 
 **UI notes:** List filters are debounced while typing; Tab 3–5 support click-drag (including edge auto-scroll) for contiguous row selection. Tab 5 uses compact tag slots and ffprobe next to resolution options; Explorer stays in the right-click menu on lists.
 
@@ -78,6 +82,7 @@ The GUI supports **English, German, Spanish, and French**. Choose the language u
 
 ## Recent changes (high level)
 
+- **Release prep:** `app_version.py` centralizes **`APP_VERSION`** (window title, Settings, CI artifact name); `requirements.txt` / `requirements-build.txt` use conservative upper bounds; Tab 6 dedupe has optional **tag-priority** checkbox; Tab 7 can load selection into Tab 5; `tab7_tab5_buffer.csv` is gitignored.
 - **Tab 5** copy and layout: short labels **Protect tags** / **Add tags**, conditional hint text under **Add tags**, and the protect-tags hint on the same block as **Title max.** Locales live in `mklocales.py` → `python mklocales.py`.
 - **Light mode:** checkbox and radio colors in `themes/blue_soft.json` are easier to see when checked.
 - **Tab 5** schema rename: title/year/slots/resolution/rating → **new file name** column; presets in local JSON.
@@ -101,6 +106,7 @@ All `*.csv` files anywhere in the tree are ignored so path lists are harder to c
 | File | Role |
 |------|------|
 | `gui_file_tools.py` | GUI (CustomTkinter) |
+| `app_version.py` | Release **`APP_VERSION`** (title, Settings, CI artifact name) |
 | `file_rename_tools.py` | CSV & rename logic |
 | `export_stash_files.ps1` | Export Stash → CSV |
 | `apply_stash_file_renames.ps1` | Rename from CSV (CLI) |

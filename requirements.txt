@@ -1,1 +1,2 @@
-customtkinter>=5.2.0
+# Runtime (GUI). Upper bounds reduce surprise upgrades on reinstall before a new release.
+customtkinter>=5.2.0,<6

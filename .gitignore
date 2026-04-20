@@ -20,6 +20,9 @@ gui_file_tools_settings.json
 # Tab 5 rename presets (your tag text / patterns — do not publish)
 schema_rename_presets.json
 
+# Tab 7 → Tab 5 buffer CSV (runtime; may contain paths)
+tab7_tab5_buffer.csv
+
 # Generated CSVs / exports (your media paths)
 file_tools_csv/
 

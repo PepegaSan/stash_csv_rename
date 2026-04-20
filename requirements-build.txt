@@ -1,1 +1,2 @@
-pyinstaller>=6.3.0
+# Build-only. Pin major line for reproducible one-file builds.
+pyinstaller>=6.3.0,<7

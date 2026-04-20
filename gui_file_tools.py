@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""CustomTkinter: Tab1 Stash CSV, Tab2 disk scan, Tab3 rename, Tab4 move, Tab5 schema rename."""
+"""CustomTkinter: Tab1 Stash CSV, Tab2 disk scan, Tab3 rename, Tab4 move, Tab5 schema rename, Tab6 name sync, Tab7 file sync."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import sys
 import threading
 import webbrowser
 from pathlib import Path
-from tkinter import Menu, TclError, filedialog, ttk
+from tkinter import Menu, TclError, filedialog, messagebox, ttk
 from urllib.parse import urljoin
 
 import customtkinter as ctk
@@ -18,6 +18,12 @@ import customtkinter as ctk
 from i18n import SUPPORTED_LANGS, Translator
 
 from theme_palette import PALETTE_DARK, PALETTE_LIGHT
+
+from app_version import APP_VERSION
+
+from name_sync_by_size import sync_target_names_from_source
+
+from file_mirror_sync import MirrorCopyRow, delete_copied_files, run_mirror_copy
 
 from file_rename_tools import (
     append_schema_tags_to_leaf,
@@ -29,6 +35,8 @@ from file_rename_tools import (
     build_leaf_tags_only_mode,
     build_schema_rename_leaf,
     compose_ui_list_filter,
+    csv_row_from_path,
+    leaf_has_trailing_bracket_tag_suffix,
     merge_extra_bracket_tags_into_leaf,
     merge_schema_metadata_into_append_leaf,
     strip_non_auto_bracket_tags_from_leaf,
@@ -47,6 +55,7 @@ from file_rename_tools import (
     sanitize_windows_dir_component,
     scan_folder_files,
     probe_stash_csv_export_schema,
+    stash_resolve_scene_id_for_local_path,
     test_stash_graphql_connection,
     truncate_leaf_stem_to_max_chars,
     unique_leaf_in_dir,
@@ -75,6 +84,7 @@ _RES_DIR = _resource_dir()
 _SETTINGS_PATH = _APP_DIR / "gui_file_tools_settings.json"
 _SCHEMA_PRESETS_PATH = _APP_DIR / "schema_rename_presets.json"
 _DEFAULT_STASH_PS1 = _RES_DIR / "export_stash_files.ps1"
+_TAB7_TAB5_BUFFER_CSV = _APP_DIR / "tab7_tab5_buffer.csv"
 
 _FILTER_FIELD_KEYS_TAB34: tuple[str, ...] = (
     "all",
@@ -95,6 +105,10 @@ _TK_SHIFT_MASK = 0x0001
 _TK_CONTROL_MASK = 0x0004
 # Large Treeview fills: insert in chunks so the UI stays responsive with thousands of rows.
 _TTK_TREE_INSERT_BATCH = 350
+# Above this row count, Treeview inserts are scheduled across idle events (per-widget cancel token).
+_TTK_TREE_ASYNC_THRESHOLD = 450
+# Tab 7: avoid writing thousands of lines into the log Text widget in one go.
+_T7_LOG_DETAIL_MAX = 250
 # Each successful Tab 3/4/5 disk batch appends one undo entry; oldest batches drop past this cap.
 _RENAME_UNDO_MAX_BATCHES = 32
 
@@ -139,7 +153,7 @@ class FileToolsApp(ctk.CTk):
         _load_customtkinter_theme()
         super().__init__(fg_color=PALETTE_DARK["bg"])
         self._pal: dict[str, str] = dict(PALETTE_DARK)
-        self.title("Stashmarker — file list & rename")
+        self.title(f"Stashmarker — file list & rename · v{APP_VERSION}")
         self.geometry("1180x960")
         self.minsize(920, 640)
         self._nav_key = "t1"
@@ -247,6 +261,34 @@ class FileToolsApp(ctk.CTk):
         self._t5_sort_col = "path"
         self._t5_sort_desc = False
 
+        # Tab 6 — rename target files to match source names (size + extension; optional partial hash)
+        self._t6_source = ctk.StringVar(value="")
+        self._t6_target = ctk.StringVar(value="")
+        self._t6_dry = ctk.BooleanVar(value=True)
+        self._t6_partial_hash = ctk.BooleanVar(value=False)
+        self._t6_keep_bracket_tags = ctk.BooleanVar(value=False)
+        self._t6_dedupe_prefer_tagged = ctk.BooleanVar(value=False)
+        self._t6_dedupe_mode = ctk.StringVar(value="alpha")
+        self._t6_busy = False
+        self._btn_t6_run: ctk.CTkButton | None = None
+        self._btn_t6_undo: ctk.CTkButton | None = None
+        self._t6_dup_tree: ttk.Treeview | None = None
+        self._t6_dup_entries: list[dict[str, str]] = []
+        # Batches of successful on-disk renames (newest last); each batch is undo_file_renames records.
+        self._t6_undo_batches: list[list[tuple[int, str, str, str]]] = []
+
+        # Tab 7 — copy missing files from source tree into target (mirrored relative paths)
+        self._t7_source = ctk.StringVar(value="")
+        self._t7_target = ctk.StringVar(value="")
+        self._t7_mode = ctk.StringVar(value="update")
+        self._t7_dry = ctk.BooleanVar(value=True)
+        self._t7_busy = False
+        self._btn_t7_run: ctk.CTkButton | None = None
+        self._btn_t7_undo: ctk.CTkButton | None = None
+        self._t7_tree: ttk.Treeview | None = None
+        self._t7_last_rows: list[MirrorCopyRow] = []
+        self._t7_undo_batches: list[list[str]] = []
+
         self._appearance_mode = ctk.StringVar(value="dark")
         self._ui_language = ctk.StringVar(value="en")
         self._settings_dialog: ctk.CTkToplevel | None = None
@@ -264,7 +306,8 @@ class FileToolsApp(ctk.CTk):
         self._ensure_bundled_export_ps1_path()
         self._sync_palette_from_appearance()
         self._translator = Translator(_RES_DIR / "locales", self._norm_lang_code(self._ui_language.get()))
-        self.title(self._tr("app.window_title"))
+        self._translator_en = Translator(_RES_DIR / "locales", "en")
+        self.title(self._app_window_title())
         self._build_ui()
         self.configure(fg_color=self._pal["bg"])
         self._apply_user_appearance_setting()
@@ -279,8 +322,15 @@ class FileToolsApp(ctk.CTk):
         c = (raw or "en").strip().lower()
         return c if c in SUPPORTED_LANGS else "en"
 
+    def _app_window_title(self) -> str:
+        return f"{self._tr('app.window_title')} · v{APP_VERSION}"
+
     def _tr(self, key: str, **kwargs: object) -> str:
         return self._translator.tr(key, **kwargs)
+
+    def _tr_log_en(self, key: str, **kwargs: object) -> str:
+        """English log strings for Tab 6 / Tab 7 (UI can stay DE/ES/FR)."""
+        return self._translator_en.tr(key, **kwargs)
 
     def _rebuild_all_tab_variables(self) -> None:
         """New Variable instances after destroying the UI.
@@ -358,6 +408,19 @@ class FileToolsApp(ctk.CTk):
         self._t5_preset_name = ctk.StringVar(value=self._t5_preset_name.get())
         self._t5_preset_pick = ctk.StringVar(value=self._t5_preset_pick.get())
         self._log_collapsed = ctk.BooleanVar(value=self._log_collapsed.get())
+
+        self._t6_source = ctk.StringVar(value=self._t6_source.get())
+        self._t6_target = ctk.StringVar(value=self._t6_target.get())
+        self._t6_dry = ctk.BooleanVar(value=self._t6_dry.get())
+        self._t6_partial_hash = ctk.BooleanVar(value=self._t6_partial_hash.get())
+        self._t6_keep_bracket_tags = ctk.BooleanVar(value=self._t6_keep_bracket_tags.get())
+        self._t6_dedupe_prefer_tagged = ctk.BooleanVar(value=self._t6_dedupe_prefer_tagged.get())
+        self._t6_dedupe_mode = ctk.StringVar(value=self._t6_dedupe_mode.get())
+
+        self._t7_source = ctk.StringVar(value=self._t7_source.get())
+        self._t7_target = ctk.StringVar(value=self._t7_target.get())
+        self._t7_mode = ctk.StringVar(value=self._t7_mode.get())
+        self._t7_dry = ctk.BooleanVar(value=self._t7_dry.get())
 
     def _remove_t4_traces(self) -> None:
         for v, tid in self._t4_trace_ids:
@@ -558,7 +621,7 @@ class FileToolsApp(ctk.CTk):
             pass
         self._rebuild_all_tab_variables()
         self._translator.set_lang(self._norm_lang_code(self._ui_language.get()))
-        self.title(self._tr("app.window_title"))
+        self.title(self._app_window_title())
         self._build_ui()
         self.configure(fg_color=self._pal["bg"])
         self._apply_user_appearance_setting()
@@ -1020,26 +1083,73 @@ class FileToolsApp(ctk.CTk):
         *,
         batch: int = _TTK_TREE_INSERT_BATCH,
     ) -> None:
+        """Replace all rows in a Treeview; large lists insert asynchronously so the UI stays responsive."""
+        tid = id(tree)
+        if not hasattr(self, "_ttk_tree_fill_tokens"):
+            self._ttk_tree_fill_tokens: dict[int, int] = {}
+        self._ttk_tree_fill_tokens[tid] = self._ttk_tree_fill_tokens.get(tid, 0) + 1
+        serial = self._ttk_tree_fill_tokens[tid]
+
         ch = tree.get_children()
         if ch:
-            tree.delete(*ch)
-        n = len(rows_out)
-        if n == 0:
-            return
-        step = 0
-        for start in range(0, n, max(1, batch)):
-            for iid, vals in rows_out[start : start + batch]:
-                tree.insert("", "end", iid=iid, values=vals)
-                step += 1
-                if step % 400 == 0:
+            if len(ch) > 500:
+                while True:
+                    if self._ttk_tree_fill_tokens.get(tid, 0) != serial:
+                        return
+                    ch2 = tree.get_children()
+                    if not ch2:
+                        break
+                    tree.delete(*ch2[:400])
                     try:
                         self.update_idletasks()
                     except TclError:
                         pass
-        try:
-            self.update_idletasks()
-        except TclError:
-            pass
+            else:
+                tree.delete(*ch)
+
+        n = len(rows_out)
+        if n == 0:
+            try:
+                self.update_idletasks()
+            except TclError:
+                pass
+            return
+
+        if n <= _TTK_TREE_ASYNC_THRESHOLD:
+            step = 0
+            for start in range(0, n, max(1, batch)):
+                if self._ttk_tree_fill_tokens.get(tid, 0) != serial:
+                    return
+                for iid, vals in rows_out[start : start + batch]:
+                    tree.insert("", "end", iid=iid, values=vals)
+                    step += 1
+                    if step % 400 == 0:
+                        try:
+                            self.update_idletasks()
+                        except TclError:
+                            pass
+            try:
+                self.update_idletasks()
+            except TclError:
+                pass
+            return
+
+        def pump(start_idx: int) -> None:
+            if self._ttk_tree_fill_tokens.get(tid, 0) != serial:
+                return
+            end_idx = min(start_idx + batch, n)
+            for i in range(start_idx, end_idx):
+                iid, vals = rows_out[i]
+                tree.insert("", "end", iid=iid, values=vals)
+            if end_idx < n:
+                self.after(1, lambda s=end_idx: pump(s))
+            else:
+                try:
+                    self.update_idletasks()
+                except TclError:
+                    pass
+
+        pump(0)
 
     def _app_csv_delim(self) -> str:
         """Semicolon or comma between CSV columns when saving. Opening a file auto-detects ; vs ,."""
@@ -1255,12 +1365,16 @@ class FileToolsApp(ctk.CTk):
         self.panel_t3 = _mk_scroll_panel()
         self.panel_t4 = _mk_scroll_panel()
         self.panel_t5 = _mk_scroll_panel()
+        self.panel_t6 = _mk_scroll_panel()
+        self.panel_t7 = _mk_scroll_panel()
         self.panels = {
             "t1": self.panel_t1,
             "t2": self.panel_t2,
             "t3": self.panel_t3,
             "t4": self.panel_t4,
             "t5": self.panel_t5,
+            "t6": self.panel_t6,
+            "t7": self.panel_t7,
         }
         for pan in self.panels.values():
             pan.grid_columnconfigure(0, weight=1)
@@ -1272,6 +1386,8 @@ class FileToolsApp(ctk.CTk):
             (self._tr("tab.3"), "t3"),
             (self._tr("tab.4"), "t4"),
             (self._tr("tab.5"), "t5"),
+            (self._tr("tab.6"), "t6"),
+            (self._tr("tab.7"), "t7"),
         ):
             self.nav_buttons[key] = self._nav_button(text, key)
 
@@ -1280,6 +1396,8 @@ class FileToolsApp(ctk.CTk):
         self._build_tab3(self.panel_t3)
         self._build_tab4(self.panel_t4)
         self._build_tab5(self.panel_t5)
+        self._build_tab6(self.panel_t6)
+        self._build_tab7(self.panel_t7)
 
         for fr in self.panels.values():
             fr.grid(row=0, column=0, sticky="nsew")
@@ -2531,6 +2649,1308 @@ class FileToolsApp(ctk.CTk):
 
         self._t5_apply_mode_dependent_ui_state()
         self._t5_sync_preset_menu_from_disk()
+
+    def _sync_t6_undo_button(self) -> None:
+        b = self._btn_t6_undo
+        if b is None:
+            return
+        try:
+            if int(b.winfo_exists()) == 0:
+                return
+        except TclError:
+            return
+        b.configure(state="normal" if self._t6_undo_batches else "disabled")
+
+    def _t6_set_action_buttons_state(self, enabled: bool) -> None:
+        """Enable/disable Tab 6 run + undo (undo only enabled when stack non-empty)."""
+        st_run = "normal" if enabled else "disabled"
+        br = self._btn_t6_run
+        if br is not None:
+            try:
+                br.configure(state=st_run)
+            except TclError:
+                pass
+        if self._btn_t6_undo is not None:
+            if enabled:
+                self._sync_t6_undo_button()
+            else:
+                try:
+                    self._btn_t6_undo.configure(state="disabled")
+                except TclError:
+                    pass
+
+    def _build_tab6(self, parent: ctk.CTkFrame) -> None:
+        self._label(parent, text=self._tr("t6.heading"), font=FONT_SECTION, anchor="w").pack(
+            fill="x", padx=10, pady=(8, 4)
+        )
+        self._label(parent, text=self._tr("t6.intro"), font=FONT_HINT, anchor="w", justify="left").pack(
+            fill="x", padx=10, pady=(0, 10)
+        )
+
+        def row_dir(label_key: str, var: ctk.StringVar, browse_cmd) -> None:
+            fr = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
+            fr.pack(fill="x", padx=10, pady=(0, 6))
+            self._label(fr, text=self._tr(label_key), font=FONT_UI_SM, anchor="w").pack(fill="x", padx=0, pady=(0, 2))
+            inner = ctk.CTkFrame(fr, fg_color=self._pal["panel"])
+            inner.pack(fill="x")
+            ctk.CTkEntry(inner, textvariable=var, **self._entry_kw()).pack(side="left", fill="x", expand=True, padx=(0, 8))
+            ctk.CTkButton(
+                inner,
+                text=self._tr("common.browse"),
+                width=self._browse_w,
+                command=browse_cmd,
+                **self._button_kw("ghost", height=_BTN_H),
+            ).pack(side="right")
+
+        row_dir("t6.source_dir", self._t6_source, self._browse_t6_source)
+        row_dir("t6.target_dir", self._t6_target, self._browse_t6_target)
+
+        opts = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
+        opts.pack(fill="x", padx=10, pady=(8, 4))
+        ctk.CTkCheckBox(
+            opts,
+            text=self._tr("t3.preview_only"),
+            variable=self._t6_dry,
+            command=self._save_settings,
+            **self._checkbox_kw(),
+        ).pack(side="left", padx=(0, 16))
+        ctk.CTkCheckBox(
+            opts,
+            text=self._tr("t6.partial_hash"),
+            variable=self._t6_partial_hash,
+            command=self._save_settings,
+            **self._checkbox_kw(),
+        ).pack(side="left", padx=(0, 16))
+        ctk.CTkCheckBox(
+            opts,
+            text=self._tr("t6.keep_bracket_tags"),
+            variable=self._t6_keep_bracket_tags,
+            command=self._save_settings,
+            **self._checkbox_kw(),
+        ).pack(side="left")
+
+        runf = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
+        runf.pack(fill="x", padx=10, pady=(12, 10))
+        self._btn_t6_run = ctk.CTkButton(
+            runf,
+            text=self._tr("t6.run"),
+            width=_btn_w(self._tr("t6.run")),
+            command=self._t6_run_sync,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
+        )
+        self._btn_t6_run.pack(side="left", padx=(0, 10))
+        self._btn_t6_undo = ctk.CTkButton(
+            runf,
+            text=self._tr("t6.undo"),
+            width=_btn_w(self._tr("t6.undo")),
+            command=self._t6_undo_last,
+            **self._button_kw("gold", height=_BTN_H),
+        )
+        self._btn_t6_undo.pack(side="left")
+        self._sync_t6_undo_button()
+
+        dup_wrap = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
+        dup_wrap.pack(fill="both", expand=True, padx=10, pady=(10, 12))
+        self._label(dup_wrap, text=self._tr("t6.dup_title"), font=FONT_SECTION, anchor="w").pack(
+            fill="x", padx=0, pady=(0, 4)
+        )
+        hint = self._label(
+            dup_wrap,
+            text=self._tr("t6.dup_hint"),
+            font=FONT_HINT,
+            anchor="w",
+            justify="left",
+        )
+        hint.pack(fill="x", padx=0, pady=(0, 6))
+
+        dedupe_bar = ctk.CTkFrame(dup_wrap, fg_color=self._pal["panel_elev"], corner_radius=8, border_width=1, border_color=self._pal["border"])
+        dedupe_bar.pack(fill="x", padx=0, pady=(0, 8))
+        self._label(dedupe_bar, text=self._tr("t6.dedupe_bar_hint"), font=FONT_HINT, anchor="w").pack(
+            fill="x", padx=10, pady=(8, 4)
+        )
+        dedupe_inner = ctk.CTkFrame(dedupe_bar, fg_color=self._pal["panel_elev"])
+        dedupe_inner.pack(fill="x", padx=8, pady=(0, 10))
+        ctk.CTkCheckBox(
+            dedupe_inner,
+            text=self._tr("t6.dedupe_tag_priority"),
+            variable=self._t6_dedupe_prefer_tagged,
+            command=self._save_settings,
+            **self._checkbox_kw(),
+        ).pack(anchor="w", padx=0, pady=(0, 4))
+        dedupe_radios = ctk.CTkFrame(dedupe_inner, fg_color=self._pal["panel_elev"])
+        dedupe_radios.pack(fill="x")
+        ctk.CTkRadioButton(
+            dedupe_radios,
+            text=self._tr("t6.dedupe_keep_alpha"),
+            variable=self._t6_dedupe_mode,
+            value="alpha",
+            command=self._save_settings,
+            **self._radio_kw(),
+        ).pack(side="left", padx=(0, 14), pady=4)
+        ctk.CTkRadioButton(
+            dedupe_radios,
+            text=self._tr("t6.dedupe_keep_source"),
+            variable=self._t6_dedupe_mode,
+            value="prefer_source",
+            command=self._save_settings,
+            **self._radio_kw(),
+        ).pack(side="left", padx=(0, 14), pady=4)
+        ctk.CTkRadioButton(
+            dedupe_radios,
+            text=self._tr("t6.dedupe_keep_target"),
+            variable=self._t6_dedupe_mode,
+            value="prefer_target",
+            command=self._save_settings,
+            **self._radio_kw(),
+        ).pack(side="left", padx=(0, 14), pady=4)
+        ctk.CTkButton(
+            dedupe_radios,
+            text=self._tr("t6.dedupe_button"),
+            width=_btn_w(self._tr("t6.dedupe_button")),
+            command=self._t6_bulk_dedupe_all_groups,
+            **self._button_kw("danger_soft", height=_BTN_H),
+        ).pack(side="left", padx=(8, 4), pady=4)
+
+        tree_frame = ctk.CTkFrame(dup_wrap, fg_color=self._pal["panel"])
+        tree_frame.pack(fill="both", expand=True)
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+        self._t6_dup_tree = ttk.Treeview(
+            tree_frame,
+            columns=("group", "match", "side", "path", "reason"),
+            show="headings",
+            height=9,
+            selectmode="extended",
+        )
+        self._t6_dup_tree.heading("group", text=self._tr("t6.dup_col.group"))
+        self._t6_dup_tree.heading("match", text=self._tr("t6.dup_col.match"))
+        self._t6_dup_tree.heading("side", text=self._tr("t6.dup_col.side"))
+        self._t6_dup_tree.heading("path", text=self._tr("t3.col.path"))
+        self._t6_dup_tree.heading("reason", text=self._tr("t6.dup_col.reason"))
+        self._t6_dup_tree.column("group", width=56, minwidth=44, stretch=False, anchor="center")
+        self._t6_dup_tree.column("match", width=210, minwidth=100, stretch=False, anchor="w")
+        self._t6_dup_tree.column("side", width=170, minwidth=120, stretch=False, anchor="w")
+        self._t6_dup_tree.column("path", width=400, minwidth=120, stretch=True, anchor="w")
+        self._t6_dup_tree.column("reason", width=160, minwidth=72, stretch=False, anchor="w")
+        self._place_ttk_tree_with_scrollbars(tree_frame, self._t6_dup_tree)
+        self._t6_dup_tree.bind("<Button-3>", self._t6_dup_context_menu)
+        self._t6_dup_tree.bind("<Button-2>", self._t6_dup_context_menu)
+        self._bind_ttk_tree_mousewheel(self._t6_dup_tree)
+        self._label(
+            dup_wrap,
+            text=self._tr("t6.dup_path_explain"),
+            font=FONT_HINT,
+            anchor="w",
+            justify="left",
+        ).pack(fill="x", padx=0, pady=(6, 0))
+        self._t6_apply_duplicate_rows(self._t6_dup_entries)
+
+    def _browse_t6_source(self) -> None:
+        p = filedialog.askdirectory(title=self._tr("t6.dlg_source"))
+        if p:
+            self._t6_source.set(p)
+            self._save_settings()
+
+    def _browse_t6_target(self) -> None:
+        p = filedialog.askdirectory(title=self._tr("t6.dlg_target"))
+        if p:
+            self._t6_target.set(p)
+            self._save_settings()
+
+    def _t6_run_sync(self) -> None:
+        if self._t6_busy:
+            self._log(self._tr_log_en("log.busy_t6"))
+            return
+        src = self._t6_source.get().strip()
+        tgt = self._t6_target.get().strip()
+        if not src or not tgt:
+            self._log(self._tr_log_en("log.t6_need_paths"))
+            return
+        src_p = Path(src)
+        tgt_p = Path(tgt)
+        if not src_p.is_dir() or not tgt_p.is_dir():
+            self._log(self._tr_log_en("log.t6_need_dirs"))
+            return
+
+        dry = bool(self._t6_dry.get())
+        use_ph = bool(self._t6_partial_hash.get())
+        keep_tags = bool(self._t6_keep_bracket_tags.get())
+        self._t6_busy = True
+        self._t6_set_action_buttons_state(False)
+        self._work_status.set(self._tr("common.work_background"))
+        self._log(self._tr_log_en("log.t6_header"))
+
+        def worker() -> None:
+            undo_batch: list[tuple[int, str, str, str]] = []
+            try:
+                _res, lines, dups = sync_target_names_from_source(
+                    src_p,
+                    tgt_p,
+                    dry_run=dry,
+                    use_partial_hash=use_ph,
+                    keep_target_if_bracket_tags=keep_tags,
+                    undo_stack=undo_batch,
+                )
+            except Exception as exc:
+                self.after(0, lambda e=exc: self._finish_t6_sync(None, e, None, None))
+            else:
+                ub = list(undo_batch)
+                dps = list(dups)
+                self.after(0, lambda ls=lines, batch=ub, dps=dps: self._finish_t6_sync(ls, None, batch, dps))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_t6_sync(
+        self,
+        lines: list[str] | None,
+        err: Exception | None,
+        undo_batch: list[tuple[int, str, str, str]] | None,
+        duplicate_rows: list[dict[str, str]] | None = None,
+    ) -> None:
+        self._t6_busy = False
+        self._clear_work_progress()
+        try:
+            if err is not None:
+                self._log(self._tr_log_en("log.t6_fail", e=str(err)))
+                return
+            if lines:
+                self._log_many_lines(lines)
+            self._t6_apply_duplicate_rows(list(duplicate_rows or []))
+            if undo_batch:
+                self._t6_undo_batches.append(undo_batch)
+                over = len(self._t6_undo_batches) - _RENAME_UNDO_MAX_BATCHES
+                if over > 0:
+                    del self._t6_undo_batches[:over]
+                    self._log(self._tr_log_en("log.undo_stack_trimmed", n=over, max=_RENAME_UNDO_MAX_BATCHES))
+            self._save_settings()
+        finally:
+            try:
+                self._t6_set_action_buttons_state(True)
+            except TclError:
+                pass
+
+    def _t6_dup_side_label(self, side: str) -> str:
+        s = (side or "").strip().lower()
+        if s == "source":
+            return self._tr("t6.side_source")
+        if s == "target":
+            return self._tr("t6.side_target")
+        return side or "—"
+
+    def _t6_dup_reason_label(self, code: str) -> str:
+        c = (code or "group").strip().lower()
+        if c == "multi_source":
+            return self._tr("t6.dup_reason.multi_source")
+        return self._tr("t6.dup_reason.group")
+
+    @staticmethod
+    def _t6_norm_path_key(p: str) -> str:
+        try:
+            return os.path.normcase(os.path.normpath((p or "").strip()))
+        except OSError:
+            return os.path.normcase((p or "").strip())
+
+    @staticmethod
+    def _t6_relative_path_under(path_str: str, root: Path) -> str | None:
+        """Return a normcase relative path if ``path_str`` lies under ``root``; else ``None``."""
+        raw = (path_str or "").strip()
+        if not raw:
+            return None
+        try:
+            p = Path(raw).expanduser().resolve(strict=False)
+            r = root.expanduser().resolve(strict=False)
+            rel = p.relative_to(r)
+        except (OSError, ValueError):
+            return None
+        return os.path.normcase(os.path.normpath(str(rel)))
+
+    def _t6_mirror_protected_norms(
+        self,
+        entries: list[dict[str, str]],
+        src_root: Path,
+        tgt_root: Path,
+    ) -> set[str]:
+        """
+        Norm-paths of files that belong to a mirrored pair: same relative path under the Tab 6
+        source root on the backup side and under the target root on the PC side.
+        These are never deleted by Tab 6 bulk dedupe or duplicate-panel delete so both copies stay in sync.
+        """
+        src_by_rel: dict[str, list[str]] = {}
+        tgt_by_rel: dict[str, list[str]] = {}
+        for ent in entries:
+            path = (ent.get("path") or "").strip()
+            if not path:
+                continue
+            side = (ent.get("side") or "").strip().lower()
+            if side == "source":
+                rel = self._t6_relative_path_under(path, src_root)
+                if rel:
+                    src_by_rel.setdefault(rel, []).append(path)
+            elif side == "target":
+                rel = self._t6_relative_path_under(path, tgt_root)
+                if rel:
+                    tgt_by_rel.setdefault(rel, []).append(path)
+        out: set[str] = set()
+        for rel, src_paths in src_by_rel.items():
+            tgt_paths = tgt_by_rel.get(rel)
+            if not tgt_paths:
+                continue
+            for p in src_paths + tgt_paths:
+                out.add(self._t6_norm_path_key(p))
+        return out
+
+    def _t6_all_mirror_protected_norms(self, src_root: Path, tgt_root: Path) -> set[str]:
+        """Union of mirror-protected path norms across all duplicate groups in the current list."""
+        by_group: dict[str, list[dict[str, str]]] = {}
+        for e in self._t6_dup_entries:
+            g = str(e.get("group") or "").strip()
+            if not g:
+                continue
+            by_group.setdefault(g, []).append(e)
+        out: set[str] = set()
+        for lst in by_group.values():
+            out |= self._t6_mirror_protected_norms(lst, src_root, tgt_root)
+        return out
+
+    def _t6_remove_paths_from_dup_entries(self, deleted_norm: set[str]) -> None:
+        """Remove deleted paths and drop groups that no longer have more than one file."""
+        remaining: list[dict[str, str]] = [
+            e for e in self._t6_dup_entries if self._t6_norm_path_key(e.get("path") or "") not in deleted_norm
+        ]
+        by_g: dict[str, list[dict[str, str]]] = {}
+        for e in remaining:
+            g = str(e.get("group") or "").strip()
+            by_g.setdefault(g, []).append(e)
+        out: list[dict[str, str]] = []
+        for g, lst in by_g.items():
+            if not g:
+                out.extend(lst)
+            elif len(lst) > 1:
+                out.extend(lst)
+        self._t6_dup_entries = out
+        self._t6_apply_duplicate_rows(self._t6_dup_entries)
+
+    def _t6_sort_entries_for_keeper(self, lst: list[dict[str, str]], mode: str) -> list[dict[str, str]]:
+        """Return entries sorted so index 0 is the one to keep; rest are delete candidates."""
+        mode = (mode or "alpha").strip().lower()
+        if mode not in ("alpha", "prefer_source", "prefer_target"):
+            mode = "alpha"
+        prefer_tagged = bool(self._t6_dedupe_prefer_tagged.get())
+
+        def key_alpha(e: dict[str, str]) -> tuple:
+            return ((e.get("path") or "").lower(),)
+
+        def key_prefer_source(e: dict[str, str]) -> tuple:
+            side = (e.get("side") or "").strip().lower()
+            return (0 if side == "source" else 1, (e.get("path") or "").lower())
+
+        def key_prefer_target(e: dict[str, str]) -> tuple:
+            side = (e.get("side") or "").strip().lower()
+            return (0 if side == "target" else 1, (e.get("path") or "").lower())
+
+        def tag_rank(e: dict[str, str]) -> int:
+            p = (e.get("path") or "").strip()
+            name = Path(p).name if p else ""
+            return 0 if leaf_has_trailing_bracket_tag_suffix(name) else 1
+
+        def secondary_key(e: dict[str, str]) -> tuple:
+            if mode == "prefer_source":
+                return key_prefer_source(e)
+            if mode == "prefer_target":
+                return key_prefer_target(e)
+            return key_alpha(e)
+
+        if prefer_tagged:
+
+            def combined(e: dict[str, str]) -> tuple:
+                return (tag_rank(e),) + secondary_key(e)
+
+            return sorted(lst, key=combined)
+        if mode == "prefer_source":
+            return sorted(lst, key=key_prefer_source)
+        if mode == "prefer_target":
+            return sorted(lst, key=key_prefer_target)
+        return sorted(lst, key=key_alpha)
+
+    def _t6_bulk_dedupe_all_groups(self) -> None:
+        """Within each duplicate group, thin extras; never delete mirrored source+target pairs (same rel path)."""
+        if self._t6_busy:
+            self._log(self._tr_log_en("log.busy_t6"))
+            return
+        if not self._t6_dup_entries:
+            self._log(self._tr_log_en("log.t6_dedupe_empty"))
+            return
+        src_s = self._t6_source.get().strip()
+        tgt_s = self._t6_target.get().strip()
+        if not src_s or not tgt_s:
+            self._log(self._tr_log_en("log.t6_dedupe_need_roots"))
+            return
+        try:
+            src_root = Path(src_s).expanduser().resolve(strict=False)
+            tgt_root = Path(tgt_s).expanduser().resolve(strict=False)
+        except OSError:
+            self._log(self._tr_log_en("log.t6_dedupe_need_roots"))
+            return
+        if not src_root.is_dir() or not tgt_root.is_dir():
+            self._log(self._tr_log_en("log.t6_dedupe_need_roots"))
+            return
+        mode = (self._t6_dedupe_mode.get() or "alpha").strip().lower()
+        if mode not in ("alpha", "prefer_source", "prefer_target"):
+            mode = "alpha"
+        by_group: dict[str, list[dict[str, str]]] = {}
+        for e in self._t6_dup_entries:
+            g = str(e.get("group") or "").strip()
+            if not g:
+                continue
+            by_group.setdefault(g, []).append(e)
+        to_delete: list[str] = []
+        n_groups = 0
+        for _gid, lst in by_group.items():
+            if len(lst) < 2:
+                continue
+            protected = self._t6_mirror_protected_norms(lst, src_root, tgt_root)
+            with_path = [e for e in lst if (e.get("path") or "").strip()]
+            if len(with_path) < 2:
+                continue
+            unprotected = [e for e in with_path if self._t6_norm_path_key(e.get("path") or "") not in protected]
+            if not unprotected:
+                continue
+            ordered = self._t6_sort_entries_for_keeper(unprotected, mode)
+            keeper = (ordered[0].get("path") or "").strip()
+            k_norm = self._t6_norm_path_key(keeper)
+            group_deletes: list[str] = []
+            for ent in ordered[1:]:
+                p = (ent.get("path") or "").strip()
+                if not p:
+                    continue
+                if self._t6_norm_path_key(p) == k_norm:
+                    continue
+                group_deletes.append(p)
+            if not group_deletes:
+                continue
+            n_groups += 1
+            to_delete.extend(group_deletes)
+        to_delete = list(dict.fromkeys(to_delete))
+        if not to_delete:
+            self._log(self._tr_log_en("log.t6_dedupe_nothing"))
+            return
+        dry = bool(self._t6_dry.get())
+        dedupe_body_key = "t6.dedupe_confirm_body_preview" if dry else "t6.dedupe_confirm_body"
+        if not messagebox.askyesno(
+            self._tr("t6.dedupe_confirm_title"),
+            self._tr(dedupe_body_key, groups=n_groups, files=len(to_delete)),
+            parent=self,
+        ):
+            return
+        if dry:
+            self._log(self._tr_log_en("log.t6_dedupe_preview", planned=len(to_delete)))
+            for fp in to_delete:
+                self._log(self._tr_log_en("log.t6_dedupe_preview_line", path=fp))
+            return
+        deleted_norm: set[str] = set()
+        deleted_ok = 0
+        for fp in to_delete:
+            p = Path(fp)
+            try:
+                if p.is_file():
+                    p.unlink()
+                    deleted_ok += 1
+                    deleted_norm.add(self._t6_norm_path_key(fp))
+            except OSError as e:
+                self._log(self._tr_log_en("log.t6_dup_delete_fail", path=fp, e=str(e)))
+        self._log(self._tr_log_en("log.t6_dedupe_done", deleted=deleted_ok, planned=len(to_delete)))
+        self._t6_remove_paths_from_dup_entries(deleted_norm)
+        self._save_settings()
+
+    def _t6_apply_duplicate_rows(self, rows: list[dict[str, str]]) -> None:
+        """Fill the Tab 6 duplicate list (paths from the last successful scan & sync)."""
+
+        def _sort_key(r: dict[str, str]) -> tuple:
+            try:
+                g = int((r.get("group") or "0").strip())
+            except ValueError:
+                g = 10**9
+            low = (r.get("side") or "").strip().lower()
+            side_rank = 0 if low == "target" else 1
+            return (g, side_rank, (r.get("path") or "").lower())
+
+        self._t6_dup_entries = sorted((dict(x) for x in rows), key=_sort_key)
+        tree = self._t6_dup_tree
+        if tree is None:
+            return
+        rows_out: list[tuple[str, tuple[object, ...]]] = []
+        for i, ent in enumerate(self._t6_dup_entries):
+            g_raw = (ent.get("group") or "").strip()
+            g_disp = f"#{g_raw}" if g_raw.isdigit() else (g_raw or "—")
+            kr = (ent.get("key") or "").strip() or "—"
+            side_l = self._t6_dup_side_label(str(ent.get("side", "")))
+            path = (ent.get("path") or "").strip()
+            rl = self._t6_dup_reason_label(str(ent.get("reason", "group")))
+            rows_out.append((str(i), (g_disp, kr, side_l, path, rl)))
+        self._ttk_tree_replace_rows(tree, rows_out)
+
+    def _t6_dup_selected_paths(self) -> list[str]:
+        tree = self._t6_dup_tree
+        if tree is None:
+            return []
+        out: list[str] = []
+        for iid in tree.selection():
+            try:
+                idx = int(iid)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= idx < len(self._t6_dup_entries):
+                p = (self._t6_dup_entries[idx].get("path") or "").strip()
+                if p:
+                    out.append(p)
+        return out
+
+    def _t6_dup_context_menu(self, event: object) -> None:
+        tree = self._t6_dup_tree
+        if tree is None:
+            return
+        row_id = tree.identify_row(getattr(event, "y", 0))
+        if row_id:
+            if row_id not in tree.selection():
+                tree.selection_set(row_id)
+            tree.focus(row_id)
+        menu = Menu(self, tearoff=0)
+        menu.add_command(label=self._tr("ctx.open_in_explorer"), command=self._t6_dup_menu_explorer)
+        menu.add_command(label=self._tr("ctx.open_in_stash"), command=self._t6_dup_menu_stash)
+        menu.add_separator()
+        menu.add_command(label=self._tr("t6.ctx_delete_file"), command=self._t6_dup_menu_delete)
+        try:
+            menu.tk_popup(int(getattr(event, "x_root", 0)), int(getattr(event, "y_root", 0)))
+        finally:
+            menu.grab_release()
+
+    def _t6_dup_menu_explorer(self) -> None:
+        paths = self._t6_dup_selected_paths()
+        if not paths:
+            self._log(self._tr("log.select_item"))
+            return
+        if len(paths) > 8:
+            self._log(self._tr_log_en("log.t6_dup_many_explorer", n=len(paths)))
+        for fp in paths[:8]:
+            self._open_path_in_file_manager(fp)
+
+    def _t6_dup_open_stash_for_path(self, fp: str) -> None:
+        fp = (fp or "").strip()
+        if not fp:
+            return
+        stash_url = (self._t1_url.get() or "").strip().rstrip("/") or "http://127.0.0.1:9999"
+        gql = (self._t1_graphql_path.get() or "/graphql").strip() or "/graphql"
+        sid, err = stash_resolve_scene_id_for_local_path(
+            stash_url,
+            self._t1_api.get(),
+            gql,
+            fp,
+        )
+        if not sid:
+            self._log(self._tr_log_en("log.t6_stash_resolve_fail", err=str(err)))
+            return
+        url = self._t5_stash_scene_url(sid)
+        if not url:
+            self._log(self._tr_log_en("log.t6_stash_resolve_fail", err="empty scene id"))
+            return
+        try:
+            ok = webbrowser.open(url)
+        except Exception as e:
+            self._log(self._tr_log_en("log.t6_stash_browser_fail", e=str(e)))
+            return
+        if not ok:
+            self._log(self._tr("log.t5_open_stash_fail_browser"))
+            return
+        self._log(self._tr("log.t5_open_stash", url=url))
+
+    def _t6_dup_menu_stash(self) -> None:
+        paths = self._t6_dup_selected_paths()
+        if not paths:
+            self._log(self._tr("log.select_item"))
+            return
+        self._t6_dup_open_stash_for_path(paths[0])
+        if len(paths) > 1:
+            self._log(self._tr_log_en("log.t6_stash_first_only", n=len(paths)))
+
+    def _t6_dup_menu_delete(self) -> None:
+        paths = self._t6_dup_selected_paths()
+        if not paths:
+            self._log(self._tr("log.select_item"))
+            return
+        src_s = self._t6_source.get().strip()
+        tgt_s = self._t6_target.get().strip()
+        if not src_s or not tgt_s:
+            self._log(self._tr_log_en("log.t6_dedupe_need_roots"))
+            return
+        try:
+            src_root = Path(src_s).expanduser().resolve(strict=False)
+            tgt_root = Path(tgt_s).expanduser().resolve(strict=False)
+        except OSError:
+            self._log(self._tr_log_en("log.t6_dedupe_need_roots"))
+            return
+        if not src_root.is_dir() or not tgt_root.is_dir():
+            self._log(self._tr_log_en("log.t6_dedupe_need_roots"))
+            return
+        protected = self._t6_all_mirror_protected_norms(src_root, tgt_root)
+        deletable = [p for p in paths if self._t6_norm_path_key(p) not in protected]
+        n_skip = len(paths) - len(deletable)
+        if not deletable:
+            self._log(self._tr_log_en("log.t6_dup_delete_all_mirror", n=len(paths)))
+            return
+        if n_skip:
+            self._log(self._tr_log_en("log.t6_dup_delete_skipped_mirror", n=n_skip))
+        dry = bool(self._t6_dry.get())
+        body_key = "t6.delete_confirm_body_preview" if dry else "t6.delete_confirm_body"
+        if not messagebox.askyesno(
+            self._tr("t6.delete_confirm_title"),
+            self._tr(body_key, n=len(deletable)),
+            parent=self,
+        ):
+            return
+        if dry:
+            self._log(self._tr_log_en("log.t6_dup_delete_preview", n=len(deletable)))
+            for fp in deletable:
+                self._log(self._tr_log_en("log.t6_dup_delete_preview_line", path=fp))
+            return
+        deleted = 0
+        deleted_norm: set[str] = set()
+        for fp in deletable:
+            p = Path(fp)
+            try:
+                if p.is_file():
+                    p.unlink()
+                    deleted += 1
+                    deleted_norm.add(self._t6_norm_path_key(fp))
+            except OSError as e:
+                self._log(self._tr_log_en("log.t6_dup_delete_fail", path=fp, e=str(e)))
+        if deleted:
+            self._log(self._tr_log_en("log.t6_dup_deleted", n=deleted))
+        if deleted_norm:
+            self._t6_remove_paths_from_dup_entries(deleted_norm)
+            self._save_settings()
+
+    def _t6_undo_last(self) -> None:
+        if self._t6_busy:
+            self._log(self._tr_log_en("log.busy_t6"))
+            return
+        if not self._t6_undo_batches:
+            self._log(self._tr_log_en("log.t6_undo_nothing"))
+            return
+        self._t6_busy = True
+        self._t6_set_action_buttons_state(False)
+        self._log(self._tr_log_en("log.t6_undo_header"))
+        try:
+            recs = self._t6_undo_batches[-1]
+            dummy_rows: list[dict[str, str]] = [
+                {"file_path": "", "file_directory": "", "file_name": "", "file_extension": "", "new_leaf": ""}
+            ]
+            dry = bool(self._t6_dry.get())
+            n, u_lines = undo_file_renames(
+                recs,
+                dummy_rows,
+                dry_run=dry,
+                keep_alive=self._tk_keepalive,
+                keep_alive_every=35,
+            )
+            self._log_many_lines(u_lines)
+            if dry:
+                self._log(self._tr_log_en("log.t6_undo_done_preview", n=len(recs)))
+            else:
+                self._t6_undo_batches.pop()
+                self._log(self._tr_log_en("log.t6_undo_done", n=n))
+                self._save_settings()
+                m = len(self._t6_undo_batches)
+                if m:
+                    self._log(self._tr_log_en("log.t6_undo_more", m=m))
+        finally:
+            self._t6_busy = False
+            try:
+                self._t6_set_action_buttons_state(True)
+            except TclError:
+                pass
+
+    # --- Tab 7 (file sync) ---
+    def _sync_t7_undo_button(self) -> None:
+        b = self._btn_t7_undo
+        if b is None:
+            return
+        try:
+            if int(b.winfo_exists()) == 0:
+                return
+        except TclError:
+            return
+        b.configure(state="normal" if self._t7_undo_batches else "disabled")
+
+    def _t7_set_action_buttons_state(self, enabled: bool) -> None:
+        st_run = "normal" if enabled else "disabled"
+        br = self._btn_t7_run
+        if br is not None:
+            try:
+                br.configure(state=st_run)
+            except TclError:
+                pass
+        if self._btn_t7_undo is not None:
+            if enabled:
+                self._sync_t7_undo_button()
+            else:
+                try:
+                    self._btn_t7_undo.configure(state="disabled")
+                except TclError:
+                    pass
+
+    def _build_tab7(self, parent: ctk.CTkFrame) -> None:
+        self._label(parent, text=self._tr("t7.heading"), font=FONT_SECTION, anchor="w").pack(
+            fill="x", padx=10, pady=(8, 4)
+        )
+        self._label(parent, text=self._tr("t7.intro"), font=FONT_HINT, anchor="w", justify="left").pack(
+            fill="x", padx=10, pady=(0, 10)
+        )
+
+        def row_dir(label_key: str, var: ctk.StringVar, browse_cmd) -> None:
+            fr = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
+            fr.pack(fill="x", padx=10, pady=(0, 6))
+            self._label(fr, text=self._tr(label_key), font=FONT_UI_SM, anchor="w").pack(fill="x", padx=0, pady=(0, 2))
+            inner = ctk.CTkFrame(fr, fg_color=self._pal["panel"])
+            inner.pack(fill="x")
+            ctk.CTkEntry(inner, textvariable=var, **self._entry_kw()).pack(side="left", fill="x", expand=True, padx=(0, 8))
+            ctk.CTkButton(
+                inner,
+                text=self._tr("common.browse"),
+                width=self._browse_w,
+                command=browse_cmd,
+                **self._button_kw("ghost", height=_BTN_H),
+            ).pack(side="right")
+
+        row_dir("t7.source_dir", self._t7_source, self._browse_t7_source)
+        row_dir("t7.target_dir", self._t7_target, self._browse_t7_target)
+
+        mode_fr = ctk.CTkFrame(parent, fg_color=self._pal["panel_elev"], corner_radius=8, border_width=1, border_color=self._pal["border"])
+        mode_fr.pack(fill="x", padx=10, pady=(4, 6))
+        self._label(mode_fr, text=self._tr("t7.mode_label"), font=FONT_UI_SM, anchor="w").pack(fill="x", padx=10, pady=(8, 4))
+        mode_inner = ctk.CTkFrame(mode_fr, fg_color=self._pal["panel_elev"])
+        mode_inner.pack(fill="x", padx=8, pady=(0, 4))
+        ctk.CTkRadioButton(
+            mode_inner,
+            text=self._tr("t7.mode.update"),
+            variable=self._t7_mode,
+            value="update",
+            command=self._save_settings,
+            **self._radio_kw(),
+        ).pack(side="left", padx=(0, 16), pady=4)
+        ctk.CTkRadioButton(
+            mode_inner,
+            text=self._tr("t7.mode.mirror"),
+            variable=self._t7_mode,
+            value="mirror",
+            command=self._save_settings,
+            **self._radio_kw(),
+        ).pack(side="left", padx=(0, 16), pady=4)
+        self._label(mode_fr, text=self._tr("t7.mode_hint"), font=FONT_HINT, anchor="w", justify="left").pack(
+            fill="x", padx=10, pady=(0, 8)
+        )
+
+        opts = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
+        opts.pack(fill="x", padx=10, pady=(8, 4))
+        ctk.CTkCheckBox(
+            opts,
+            text=self._tr("t3.preview_only"),
+            variable=self._t7_dry,
+            command=self._save_settings,
+            **self._checkbox_kw(),
+        ).pack(side="left", padx=(0, 16))
+
+        runf = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
+        runf.pack(fill="x", padx=10, pady=(12, 10))
+        run_row = ctk.CTkFrame(runf, fg_color=self._pal["panel"])
+        run_row.pack(fill="x")
+        self._btn_t7_run = ctk.CTkButton(
+            run_row,
+            text=self._tr("t7.run"),
+            width=_btn_w(self._tr("t7.run")),
+            command=self._t7_run_sync,
+            **self._button_kw("primary_emphasis", height=_BTN_H),
+        )
+        self._btn_t7_run.pack(side="left", padx=(0, 10))
+        self._btn_t7_undo = ctk.CTkButton(
+            run_row,
+            text=self._tr("t7.undo"),
+            width=_btn_w(self._tr("t7.undo")),
+            command=self._t7_undo_last,
+            **self._button_kw("gold", height=_BTN_H),
+        )
+        self._btn_t7_undo.pack(side="left")
+        self._sync_t7_undo_button()
+        self._label(runf, text=self._tr("t7.undo_hint"), font=FONT_HINT, anchor="w", justify="left").pack(
+            fill="x", padx=0, pady=(10, 0)
+        )
+
+        tree_wrap = ctk.CTkFrame(parent, fg_color=self._pal["panel"])
+        tree_wrap.pack(fill="both", expand=True, padx=10, pady=(10, 12))
+        self._label(tree_wrap, text=self._tr("t7.tree_title"), font=FONT_SECTION, anchor="w").pack(
+            fill="x", padx=0, pady=(0, 4)
+        )
+        self._label(tree_wrap, text=self._tr("t7.tree_hint"), font=FONT_HINT, anchor="w", justify="left").pack(
+            fill="x", padx=0, pady=(0, 6)
+        )
+        tree_frame = ctk.CTkFrame(tree_wrap, fg_color=self._pal["panel"])
+        tree_frame.pack(fill="both", expand=True)
+        tree_frame.grid_rowconfigure(0, weight=1)
+        tree_frame.grid_columnconfigure(0, weight=1)
+        self._t7_tree = ttk.Treeview(
+            tree_frame,
+            columns=("src", "dest", "status"),
+            show="headings",
+            height=10,
+            selectmode="extended",
+        )
+        self._t7_tree.heading("src", text=self._tr("t3.col.path"))
+        self._t7_tree.heading("dest", text=self._tr("t7.col.dest"))
+        self._t7_tree.heading("status", text=self._tr("t7.col.status"))
+        self._t7_tree.column("src", width=360, minwidth=120, stretch=True, anchor="w")
+        self._t7_tree.column("dest", width=360, minwidth=120, stretch=True, anchor="w")
+        self._t7_tree.column("status", width=140, minwidth=80, stretch=False, anchor="w")
+        self._place_ttk_tree_with_scrollbars(tree_frame, self._t7_tree)
+        self._bind_ttk_tree_mousewheel(self._t7_tree)
+        self._t7_tree.bind("<Button-3>", self._t7_tree_context_menu)
+        self._t7_tree.bind("<Button-2>", self._t7_tree_context_menu)
+        self._t7_tree.bind("<B1-Motion>", self._t7_tree_b1_motion, add="+")
+        self._label(
+            tree_wrap,
+            text=self._tr("t7.tree_sel_hint"),
+            font=FONT_HINT,
+            anchor="w",
+            justify="left",
+        ).pack(fill="x", padx=0, pady=(6, 0))
+        self._t7_apply_result_rows(self._t7_last_rows)
+
+    def _browse_t7_source(self) -> None:
+        p = filedialog.askdirectory(title=self._tr("t7.dlg_source"))
+        if p:
+            self._t7_source.set(p)
+            self._save_settings()
+
+    def _browse_t7_target(self) -> None:
+        p = filedialog.askdirectory(title=self._tr("t7.dlg_target"))
+        if p:
+            self._t7_target.set(p)
+            self._save_settings()
+
+    def _t7_status_label(self, code: str) -> str:
+        c = (code or "").strip().lower()
+        if c == "dry_mirror":
+            return self._tr("t7.status.dry_mirror")
+        if c == "dry_fallback":
+            return self._tr("t7.status.dry_fallback")
+        if c == "copied":
+            return self._tr("t7.status.copied")
+        if c == "copied_fallback":
+            return self._tr("t7.status.copied_fallback")
+        if c == "error":
+            return self._tr("t7.status.error")
+        if c == "dry_delete":
+            return self._tr("t7.status.dry_delete")
+        if c == "deleted":
+            return self._tr("t7.status.deleted")
+        if c == "error_delete":
+            return self._tr("t7.status.error_delete")
+        if c == "dry_update":
+            return self._tr("t7.status.dry_update")
+        if c == "copied_update":
+            return self._tr("t7.status.copied_update")
+        if c == "error_update":
+            return self._tr("t7.status.error_update")
+        return code or "—"
+
+    def _t7_log_rows(self, rows: list[MirrorCopyRow]) -> None:
+        if len(rows) > _T7_LOG_DETAIL_MAX:
+            self._log(self._tr_log_en("log.t7_log_truncated", shown=_T7_LOG_DETAIL_MAX, total=len(rows)))
+            rows_iter = rows[:_T7_LOG_DETAIL_MAX]
+        else:
+            rows_iter = rows
+        for row in rows_iter:
+            if row.status == "dry_mirror":
+                self._log(self._tr_log_en("log.t7_line_dry_mirror", src=row.source, dest=row.dest))
+            elif row.status == "dry_fallback":
+                self._log(self._tr_log_en("log.t7_line_dry_fallback", src=row.source, dest=row.dest))
+            elif row.status == "copied":
+                self._log(self._tr_log_en("log.t7_line_copied", src=row.source, dest=row.dest))
+            elif row.status == "copied_fallback":
+                self._log(self._tr_log_en("log.t7_line_fallback", src=row.source, dest=row.dest))
+            elif row.status == "error":
+                self._log(self._tr_log_en("log.t7_line_error", src=row.source, dest=row.dest))
+            elif row.status == "dry_delete":
+                self._log(self._tr_log_en("log.t7_line_dry_delete", path=row.dest))
+            elif row.status == "deleted":
+                self._log(self._tr_log_en("log.t7_line_deleted", path=row.dest))
+            elif row.status == "error_delete":
+                self._log(self._tr_log_en("log.t7_line_error_delete", path=row.dest))
+            elif row.status == "dry_update":
+                self._log(self._tr_log_en("log.t7_line_dry_update", src=row.source, dest=row.dest))
+            elif row.status == "copied_update":
+                self._log(self._tr_log_en("log.t7_line_copied_update", src=row.source, dest=row.dest))
+            elif row.status == "error_update":
+                self._log(self._tr_log_en("log.t7_line_error_update", src=row.source, dest=row.dest))
+
+    def _t7_apply_result_rows(self, rows: list[MirrorCopyRow]) -> None:
+        self._t7_last_rows = list(rows)
+        tree = self._t7_tree
+        if tree is None:
+            return
+        rows_out: list[tuple[str, tuple[object, ...]]] = [
+            (str(i), (row.source, row.dest, self._t7_status_label(row.status))) for i, row in enumerate(rows)
+        ]
+        try:
+            self._ttk_tree_replace_rows(tree, rows_out)
+        except TclError:
+            return
+
+    def _t7_tree_b1_motion(self, event: object) -> None:
+        """While extending a selection with the mouse, scroll near the top/bottom edge."""
+        tree = self._t7_tree
+        if tree is None:
+            return
+        if getattr(event, "widget", None) is not tree:
+            return
+        try:
+            h = int(tree.winfo_height())
+            y = int(getattr(event, "y", 0))
+        except (TypeError, ValueError):
+            return
+        edge = 28
+        if y < edge:
+            tree.yview_scroll(-3, "units")
+        elif y > max(edge * 2, h - edge):
+            tree.yview_scroll(3, "units")
+
+    def _t7_tree_selection_indices(self) -> list[int]:
+        tree = self._t7_tree
+        if tree is None:
+            return []
+        out: list[int] = []
+        for iid in tree.selection():
+            try:
+                idx = int(iid)
+            except (TypeError, ValueError):
+                continue
+            if 0 <= idx < len(self._t7_last_rows):
+                out.append(idx)
+        return out
+
+    @staticmethod
+    def _t7_primary_disk_path(row: MirrorCopyRow) -> str:
+        """Path for Explorer / delete: target path for mirror-only rows, else source."""
+        st = (row.status or "").strip().lower()
+        if st in ("dry_delete", "deleted", "error_delete"):
+            return (row.dest or "").strip()
+        return (row.source or "").strip()
+
+    def _t7_tree_context_menu(self, event: object) -> None:
+        tree = self._t7_tree
+        if tree is None:
+            return
+        row_id = tree.identify_row(getattr(event, "y", 0))
+        if row_id:
+            if row_id not in tree.selection():
+                tree.selection_set(row_id)
+            tree.focus(row_id)
+        menu = Menu(self, tearoff=0)
+        menu.add_command(label=self._tr("ctx.open_in_explorer"), command=self._t7_tree_menu_explorer)
+        menu.add_command(label=self._tr("t7.ctx_tab5"), command=self._t7_load_selection_into_tab5)
+        menu.add_separator()
+        menu.add_command(label=self._tr("t6.ctx_delete_file"), command=self._t7_tree_menu_delete)
+        try:
+            menu.tk_popup(int(getattr(event, "x_root", 0)), int(getattr(event, "y_root", 0)))
+        finally:
+            menu.grab_release()
+
+    def _t7_tree_menu_explorer(self) -> None:
+        idxs = self._t7_tree_selection_indices()
+        if not idxs:
+            self._log(self._tr("log.select_item"))
+            return
+        paths: list[str] = []
+        seen: set[str] = set()
+        for i in idxs:
+            p = self._t7_primary_disk_path(self._t7_last_rows[i])
+            if not p:
+                continue
+            k = self._t6_norm_path_key(p)
+            if k in seen:
+                continue
+            seen.add(k)
+            paths.append(p)
+        if not paths:
+            self._log(self._tr("log.select_item_path"))
+            return
+        if len(paths) > 8:
+            self._log(self._tr_log_en("log.t7_many_explorer", n=len(paths)))
+        for fp in paths[:8]:
+            self._open_path_in_file_manager(fp)
+
+    def _t7_selected_source_paths_for_tab5(self) -> list[str]:
+        """Unique source paths from the Tab 7 list selection (rows without a source path are skipped)."""
+        idxs = self._t7_tree_selection_indices()
+        if not idxs:
+            return []
+        out: list[str] = []
+        seen: set[str] = set()
+        for i in idxs:
+            if i < 0 or i >= len(self._t7_last_rows):
+                continue
+            src = (self._t7_last_rows[i].source or "").strip()
+            if not src:
+                continue
+            k = self._t6_norm_path_key(src)
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(src)
+        return out
+
+    def _t7_load_selection_into_tab5(self) -> None:
+        """Write selected source files as a small Stash-style CSV and open Tab 5 on it."""
+        if self._t7_busy:
+            self._log(self._tr_log_en("log.busy_t7"))
+            return
+        paths = self._t7_selected_source_paths_for_tab5()
+        if not paths:
+            self._log(self._tr_log_en("log.t7_tab5_nothing"))
+            return
+        rows: list[dict[str, str]] = []
+        skipped = 0
+        for fp in paths:
+            try:
+                p = Path(fp).expanduser().resolve(strict=False)
+            except OSError:
+                skipped += 1
+                continue
+            if not p.is_file():
+                skipped += 1
+                continue
+            rows.append(csv_row_from_path(p))
+        if skipped:
+            self._log(self._tr_log_en("log.t7_tab5_skipped", n=skipped))
+        if not rows:
+            self._log(self._tr_log_en("log.t7_tab5_nothing"))
+            return
+        buf = _TAB7_TAB5_BUFFER_CSV
+        try:
+            write_rename_csv(buf, rows, self._app_csv_delim())
+        except OSError as e:
+            self._log(self._tr_log_en("log.t7_tab5_write_fail", e=str(e)))
+            return
+        self._t5_csv.set(str(buf.resolve()))
+        self._t5_load_csv()
+        self.select_panel("t5")
+        self._log(self._tr_log_en("log.t7_tab5_loaded", n=len(rows), path=str(buf)))
+        self._save_settings()
+
+    def _t7_tree_menu_delete(self) -> None:
+        if self._t7_busy:
+            self._log(self._tr_log_en("log.busy_t7"))
+            return
+        idxs = self._t7_tree_selection_indices()
+        if not idxs:
+            self._log(self._tr("log.select_item"))
+            return
+        paths: list[str] = []
+        seen: set[str] = set()
+        for i in idxs:
+            p = self._t7_primary_disk_path(self._t7_last_rows[i])
+            if not p:
+                continue
+            k = self._t6_norm_path_key(p)
+            if k in seen:
+                continue
+            seen.add(k)
+            paths.append(p)
+        if not paths:
+            self._log(self._tr("log.select_item_path"))
+            return
+        dry = bool(self._t7_dry.get())
+        t7_body_key = "t7.tree_delete_confirm_body_preview" if dry else "t7.tree_delete_confirm_body"
+        if not messagebox.askyesno(
+            self._tr("t7.tree_delete_confirm_title"),
+            self._tr(t7_body_key, n=len(paths)),
+            parent=self,
+        ):
+            return
+        if dry:
+            self._log(self._tr_log_en("log.t7_tree_delete_preview", n=len(paths)))
+            for fp in paths:
+                self._log(self._tr_log_en("log.t7_tree_delete_preview_line", path=fp))
+            return
+        deleted_norm: set[str] = set()
+        deleted_n = 0
+        for fp in paths:
+            p = Path(fp)
+            try:
+                if p.is_file():
+                    p.unlink()
+                    deleted_n += 1
+                    deleted_norm.add(self._t6_norm_path_key(fp))
+            except OSError as e:
+                self._log(self._tr_log_en("log.t7_tree_delete_fail", path=fp, e=str(e)))
+        if deleted_norm:
+            self._t7_remove_result_rows_touching(deleted_norm)
+        if deleted_n:
+            self._log(self._tr_log_en("log.t7_tree_deleted", n=deleted_n))
+
+    def _t7_remove_result_rows_touching(self, deleted_norm: set[str]) -> None:
+        """Remove list rows whose source or dest path was deleted from disk."""
+        kept: list[MirrorCopyRow] = []
+        for row in self._t7_last_rows:
+            drop = False
+            for raw in (row.source, row.dest):
+                p = (raw or "").strip()
+                if p and self._t6_norm_path_key(p) in deleted_norm:
+                    drop = True
+                    break
+            if not drop:
+                kept.append(row)
+        self._t7_apply_result_rows(kept)
+
+    def _t7_run_sync(self) -> None:
+        if self._t7_busy:
+            self._log(self._tr_log_en("log.busy_t7"))
+            return
+        src = self._t7_source.get().strip()
+        tgt = self._t7_target.get().strip()
+        if not src or not tgt:
+            self._log(self._tr_log_en("log.t7_need_paths"))
+            return
+        src_p = Path(src)
+        tgt_p = Path(tgt)
+        if not src_p.is_dir() or not tgt_p.is_dir():
+            self._log(self._tr_log_en("log.t7_need_dirs"))
+            return
+        dry = bool(self._t7_dry.get())
+        mode = (self._t7_mode.get() or "update").strip().lower()
+        if mode not in ("update", "mirror"):
+            mode = "update"
+        self._t7_busy = True
+        self._t7_set_action_buttons_state(False)
+        self._work_status.set(self._tr("common.work_background"))
+        self._log(self._tr_log_en("log.t7_header"))
+
+        def worker() -> None:
+            try:
+                rows, undo = run_mirror_copy(src_p, tgt_p, dry_run=dry, mode=mode)
+            except ValueError as ve:
+                code = str(ve.args[0]).strip() if ve.args else "overlap"
+                self.after(0, lambda c=code: self._finish_t7_sync([], [], c, None))
+            except Exception as exc:
+                self.after(0, lambda e=exc: self._finish_t7_sync([], [], "", e))
+            else:
+                rs = list(rows)
+                u = list(undo)
+                self.after(0, lambda: self._finish_t7_sync(rs, u, "", None))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_t7_sync(
+        self,
+        rows: list[MirrorCopyRow],
+        undo: list[str],
+        err_kind: str,
+        err: Exception | None,
+    ) -> None:
+        self._t7_busy = False
+        self._clear_work_progress()
+        try:
+            if err is not None:
+                self._log(self._tr_log_en("log.t7_fail", e=str(err)))
+                self._t7_apply_result_rows([])
+                return
+            if err_kind == "overlap":
+                self._log(self._tr_log_en("log.t7_overlap"))
+                self._t7_apply_result_rows([])
+                return
+            if err_kind == "not_dir":
+                self._log(self._tr_log_en("log.t7_need_dirs"))
+                self._t7_apply_result_rows([])
+                return
+            if not rows:
+                self._log(self._tr_log_en("log.t7_nothing"))
+            else:
+                self._t7_log_rows(rows)
+                dry_b = bool(self._t7_dry.get())
+                copied = sum(
+                    1
+                    for r in rows
+                    if r.status in ("dry_mirror", "dry_fallback", "copied", "copied_fallback")
+                )
+                refreshed = sum(1 for r in rows if r.status in ("dry_update", "copied_update"))
+                deleted = sum(1 for r in rows if r.status in ("dry_delete", "deleted"))
+                errors = sum(
+                    1
+                    for r in rows
+                    if r.status in ("error", "error_delete", "error_update")
+                )
+                sfx = " Preview only; disk unchanged." if dry_b else ""
+                self._log(
+                    self._tr_log_en(
+                        "log.t7_summary",
+                        copied=copied,
+                        refreshed=refreshed,
+                        deleted=deleted,
+                        errors=errors,
+                        suffix=sfx,
+                    )
+                )
+            self._t7_apply_result_rows(rows)
+            if undo and not bool(self._t7_dry.get()):
+                self._t7_undo_batches.append(undo)
+                over = len(self._t7_undo_batches) - _RENAME_UNDO_MAX_BATCHES
+                if over > 0:
+                    del self._t7_undo_batches[:over]
+                    self._log(self._tr_log_en("log.undo_stack_trimmed", n=over, max=_RENAME_UNDO_MAX_BATCHES))
+            self._save_settings()
+        finally:
+            try:
+                self._t7_set_action_buttons_state(True)
+            except TclError:
+                pass
+
+    def _t7_undo_last(self) -> None:
+        if self._t7_busy:
+            self._log(self._tr_log_en("log.busy_t7"))
+            return
+        if not self._t7_undo_batches:
+            self._log(self._tr_log_en("log.t7_undo_nothing"))
+            return
+        batch = self._t7_undo_batches[-1]
+        if not batch:
+            self._t7_undo_batches.pop()
+            self._sync_t7_undo_button()
+            self._save_settings()
+            return
+        if not messagebox.askyesno(
+            self._tr("t7.undo_confirm_title"),
+            self._tr("t7.undo_confirm_body", n=len(batch)),
+            parent=self,
+        ):
+            return
+        self._t7_busy = True
+        self._t7_set_action_buttons_state(False)
+        self._log(self._tr_log_en("log.t7_undo_header"))
+        try:
+            n_ok, fails = delete_copied_files(batch)
+            for path_part, err_part in fails:
+                self._log(self._tr_log_en("log.t7_undo_fail", path=path_part, e=err_part))
+            self._t7_undo_batches.pop()
+            self._log(self._tr_log_en("log.t7_undo_done", n=n_ok))
+            self._t7_apply_result_rows([])
+            self._save_settings()
+            m = len(self._t7_undo_batches)
+            if m:
+                self._log(self._tr_log_en("log.t6_undo_more", m=m))
+        finally:
+            self._t7_busy = False
+            try:
+                self._t7_set_action_buttons_state(True)
+            except TclError:
+                pass
 
     # --- Tab 5 (schema rename) ---
     def _browse_t5_csv(self) -> None:
@@ -4875,6 +6295,14 @@ class FileToolsApp(ctk.CTk):
             **self._button_kw("ghost", height=_BTN_H),
         ).pack(side="left")
 
+        self._label(
+            outer,
+            text=self._tr("settings.version_caption", version=APP_VERSION),
+            anchor="w",
+            text_color=self._pal["muted"],
+            font=FONT_HINT,
+        ).pack(fill="x", padx=14, pady=(8, 4))
+
         btns = ctk.CTkFrame(top, fg_color=self._pal["bg"])
         btns.pack(fill="x", padx=14, pady=(0, 12))
 
@@ -4996,6 +6424,17 @@ class FileToolsApp(ctk.CTk):
             "t5_tag_en": [self._t5_tag_en[i].get() for i in range(5)],
             "t5_tag_txt": [self._t5_tag_txt[i].get() for i in range(5)],
             "t5_preset_name": self._t5_preset_name.get(),
+            "t6_source": self._t6_source.get(),
+            "t6_target": self._t6_target.get(),
+            "t6_dry": self._t6_dry.get(),
+            "t6_partial_hash": self._t6_partial_hash.get(),
+            "t6_keep_bracket_tags": self._t6_keep_bracket_tags.get(),
+            "t6_dedupe_prefer_tagged": self._t6_dedupe_prefer_tagged.get(),
+            "t6_dedupe_mode": self._t6_dedupe_mode.get(),
+            "t7_source": self._t7_source.get(),
+            "t7_target": self._t7_target.get(),
+            "t7_mode": self._t7_mode.get(),
+            "t7_dry": self._t7_dry.get(),
             "log_panel_collapsed": self._log_collapsed.get(),
         }
 
@@ -5104,6 +6543,17 @@ class FileToolsApp(ctk.CTk):
             elif isinstance(ss, str) and ss.strip().lower() == "full_stem":
                 self._t5_preserve_tags_on_shorten.set(False)
         g("t5_preset_name", self._t5_preset_name)
+        g("t6_source", self._t6_source)
+        g("t6_target", self._t6_target)
+        g("t6_dry", self._t6_dry)
+        g("t6_partial_hash", self._t6_partial_hash)
+        g("t6_keep_bracket_tags", self._t6_keep_bracket_tags)
+        g("t6_dedupe_prefer_tagged", self._t6_dedupe_prefer_tagged)
+        g("t6_dedupe_mode", self._t6_dedupe_mode)
+        g("t7_source", self._t7_source)
+        g("t7_target", self._t7_target)
+        g("t7_mode", self._t7_mode)
+        g("t7_dry", self._t7_dry)
         g("log_panel_collapsed", self._log_collapsed)
         g("ui_language", self._ui_language)
         te = data.get("t5_tag_en")
@@ -5114,6 +6564,18 @@ class FileToolsApp(ctk.CTk):
         if isinstance(tt, list):
             for i, v in enumerate(tt[:5]):
                 self._t5_tag_txt[i].set(str(v) if v is not None else "")
+
+        dm = (self._t6_dedupe_mode.get() or "alpha").strip().lower()
+        if dm == "prefer_tagged":
+            self._t6_dedupe_prefer_tagged.set(True)
+            self._t6_dedupe_mode.set("alpha")
+            dm = "alpha"
+        if dm not in ("alpha", "prefer_source", "prefer_target"):
+            self._t6_dedupe_mode.set("alpha")
+
+        t7m = (self._t7_mode.get() or "update").strip().lower()
+        if t7m not in ("update", "mirror"):
+            self._t7_mode.set("update")
 
         k34 = frozenset(_FILTER_FIELD_KEYS_TAB34)
         k5 = frozenset(_FILTER_FIELD_KEYS_TAB5)

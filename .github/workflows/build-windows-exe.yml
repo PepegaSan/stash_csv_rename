@@ -16,6 +16,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: App version (for artifact name)
+        id: ver
+        shell: bash
+        run: echo "version=$(python -c 'from app_version import APP_VERSION; print(APP_VERSION)')" >> "$GITHUB_OUTPUT"
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -28,5 +33,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Stashmarker-Windows
+          name: Stashmarker-${{ steps.ver.outputs.version }}-Windows
           path: dist/Stashmarker.exe

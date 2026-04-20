@@ -2,6 +2,8 @@
 """
 PyInstaller one-file, windowed (no console) bundle for Stashmarker.
 
+Bump ``APP_VERSION`` in ``app_version.py`` at the repo root for each release (window title and CI artifact name).
+
 Tab 5 schema-rename help (the info dialog) is plain GUI + ``locales/*.json`` strings;
 no additional ``datas`` entries are required beyond the ``locales`` tree below.
 
@@ -27,7 +29,14 @@ datas = [
     (os.path.join(_root, "export_stash_files.ps1"), "."),
 ]
 binaries = []
-hiddenimports = ["i18n", "file_rename_tools", "theme_palette"]
+hiddenimports = [
+    "app_version",
+    "i18n",
+    "file_rename_tools",
+    "theme_palette",
+    "name_sync_by_size",
+    "file_mirror_sync",
+]
 
 # CustomTkinter: Python code + bundled images / themes / Tcl bits used by the widgets.
 tmp_ret = collect_all("customtkinter")
