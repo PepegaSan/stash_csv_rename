@@ -119,6 +119,8 @@ _BTN_H = BTN_HEIGHT_COMPACT
 
 # After last keystroke in list filters, wait before rebuilding large treeviews (smoother typing).
 _FILTER_TYPING_DEBOUNCE_MS = 520
+# Tab 5 list filters: longer pause (schema preview is heavy even when not sorting by proposed).
+_T5_FILTER_TYPING_DEBOUNCE_MS = 950
 # Tab 5: tag slot / title max text — debounced tree refresh (separate from list filters).
 _T5_SCHEMA_TYPING_DEBOUNCE_MS = 360
 
@@ -457,7 +459,7 @@ class FileToolsApp(ctk.CTk):
     def _install_t5_traces(self) -> None:
         """Refresh Tab 5 preview when schema options (tags, title length, …) change."""
         self._remove_t5_traces()
-        cb_filter = lambda *_: self._t5_schedule_rebuild_tree(delay_ms=_FILTER_TYPING_DEBOUNCE_MS)
+        cb_filter = lambda *_: self._t5_schedule_rebuild_tree(delay_ms=_T5_FILTER_TYPING_DEBOUNCE_MS)
         cb_schema_leaf = lambda *_: self._t5_on_schema_preview_change()
         cb_tag_text = lambda *_: self._t5_schedule_rebuild_tree()
         for i in range(5):
@@ -2277,7 +2279,7 @@ class FileToolsApp(ctk.CTk):
             field_keys=_FILTER_FIELD_KEYS_TAB5,
             inc_placeholder=self._tr("t3.filter_placeholder"),
             ex_placeholder=self._tr("common.exclude_placeholder"),
-            on_change=lambda: self._t5_schedule_rebuild_tree(delay_ms=_FILTER_TYPING_DEBOUNCE_MS),
+            on_change=lambda: self._t5_schedule_rebuild_tree(delay_ms=_T5_FILTER_TYPING_DEBOUNCE_MS),
             use_keyrelease=False,
         )
 
@@ -2690,7 +2692,8 @@ class FileToolsApp(ctk.CTk):
         self._t5_sync_preset_menu_from_disk()
         self._log(self._tr("log.t5_preset_deleted", name=choice))
 
-    def _t5_row_visible(self, row: dict[str, str]) -> bool:
+    def _t5_filter_include_exclude(self) -> tuple[str, str]:
+        """Composed include / exclude filter strings (same inputs for every row in a pass)."""
         inc = compose_ui_list_filter(
             self._t5_filter.get(),
             self._t5_filter_field.get(),
@@ -2701,6 +2704,11 @@ class FileToolsApp(ctk.CTk):
             self._t5_filter_exclude_field.get(),
             self._t5_filter_exclude_combine.get(),
         )
+        return inc, exc
+
+    def _t5_row_visible_with_filters(self, row: dict[str, str], inc: str, exc: str) -> bool:
+        if not inc.strip() and not exc.strip():
+            return True
         # Building visibility runs for every row — only compute the expensive proposed leaf when
         # the filter actually references the proposed column (``proposed:`` prefix).
         need_prop = "proposed:" in inc.lower() or "proposed:" in exc.lower()
@@ -2722,8 +2730,13 @@ class FileToolsApp(ctk.CTk):
             proposed_leaf=leaf if need_prop else "",
         )
 
+    def _t5_row_visible(self, row: dict[str, str]) -> bool:
+        inc, exc = self._t5_filter_include_exclude()
+        return self._t5_row_visible_with_filters(row, inc, exc)
+
     def _t5_visible_indices(self) -> list[int]:
-        return [i for i, row in enumerate(self._t5_rows) if self._t5_row_visible(row)]
+        inc, exc = self._t5_filter_include_exclude()
+        return [i for i, row in enumerate(self._t5_rows) if self._t5_row_visible_with_filters(row, inc, exc)]
 
     def _t5_selected_indices(self) -> list[int]:
         out: list[int] = []
@@ -2963,7 +2976,8 @@ class FileToolsApp(ctk.CTk):
         return leaf, warn
 
     def _t5_build_visible_tree_rows(self) -> list[tuple[str, tuple[object, ...]]]:
-        visible = [i for i, row in enumerate(self._t5_rows) if self._t5_row_visible(row)]
+        inc, exc = self._t5_filter_include_exclude()
+        visible = [i for i, row in enumerate(self._t5_rows) if self._t5_row_visible_with_filters(row, inc, exc)]
         col = self._t5_sort_col
         # One ``_t5_compute_leaf_for_row`` per visible row (sorting by "proposed" used to call it
         # O(n log n) times via key comparisons).
