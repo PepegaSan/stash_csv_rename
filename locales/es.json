@@ -171,7 +171,7 @@
   "t5.ffprobe_resolution_hint": "Resolución: etiquetas por altura habituales (p. ej. 1080p); si la altura no encaja, se usa ancho×alto.",
   "t5.tag_slot_ph": "Etiqueta {n} — texto si marcado",
   "t5.tag_structure_hint": "Idea opcional: ranura 1=[Gato], 2=[Jardín], 3=[Mañana]; 4–5 extras (perro, notas …). Solo ranuras marcadas; en el nombre: 1→5, luego resolución y valoración.",
-  "t5.col.scene_title": "Título escena",
+  "t5.col.scene_id": "ID de escena",
   "t5.col.scene_date": "Fecha (CSV)",
   "t5.col.scene_tags": "Etiquetas Stash",
   "t5.col.scene_markers": "Marcadores",

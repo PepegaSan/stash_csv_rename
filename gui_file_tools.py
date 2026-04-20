@@ -2302,7 +2302,7 @@ class FileToolsApp(ctk.CTk):
                 "file_name",
                 "name_gap",
                 "proposed",
-                "scene_title",
+                "scene_id",
                 "scene_tags",
                 "scene_markers",
                 "scene_date",
@@ -2321,7 +2321,7 @@ class FileToolsApp(ctk.CTk):
             "proposed", text=self._tr("t5.col.proposed"), command=lambda: self._toggle_sort_t5("proposed")
         )
         self._t5_tree.heading(
-            "scene_title", text=self._tr("t5.col.scene_title"), command=lambda: self._toggle_sort_t5("scene_title")
+            "scene_id", text=self._tr("t5.col.scene_id"), command=lambda: self._toggle_sort_t5("scene_id")
         )
         self._t5_tree.heading(
             "scene_tags", text=self._tr("t5.col.scene_tags"), command=lambda: self._toggle_sort_t5("scene_tags")
@@ -2339,7 +2339,7 @@ class FileToolsApp(ctk.CTk):
         self._t5_tree.column("file_name", width=260, minwidth=70, stretch=False, anchor="w")
         self._t5_tree.column("name_gap", width=16, minwidth=12, stretch=False, anchor="center")
         self._t5_tree.column("proposed", width=300, minwidth=100, stretch=False, anchor="w")
-        self._t5_tree.column("scene_title", width=88, minwidth=44, stretch=False, anchor="w")
+        self._t5_tree.column("scene_id", width=100, minwidth=56, stretch=False, anchor="w")
         self._t5_tree.column("scene_tags", width=80, minwidth=44, stretch=False, anchor="w")
         self._t5_tree.column("scene_markers", width=80, minwidth=44, stretch=False, anchor="w")
         self._t5_tree.column("scene_date", width=64, minwidth=44, stretch=False, anchor="w")
@@ -2786,8 +2786,8 @@ class FileToolsApp(ctk.CTk):
             return self._sort_key_text(row.get("file_path", ""))
         if col == "file_name":
             return self._sort_key_text(row.get("file_name", ""))
-        if col == "scene_title":
-            return self._sort_key_text(row.get("scene_title", ""))
+        if col == "scene_id":
+            return self._sort_key_int_or_text(row.get("scene_id", ""))
         if col == "scene_tags":
             return self._sort_key_text(row.get("scene_tags", ""))
         if col == "scene_markers":
@@ -2964,7 +2964,7 @@ class FileToolsApp(ctk.CTk):
                         row.get("file_name", ""),
                         "",
                         leaf or "—",
-                        row.get("scene_title", ""),
+                        row.get("scene_id", ""),
                         row.get("scene_tags", ""),
                         row.get("scene_markers", ""),
                         row.get("scene_date", ""),

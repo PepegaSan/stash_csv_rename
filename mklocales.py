@@ -673,7 +673,7 @@ row(
     "Idea opcional: ranura 1=[Gato], 2=[Jardín], 3=[Mañana]; 4–5 extras (perro, notas …). Solo ranuras marcadas; en el nombre: 1→5, luego resolución y valoración.",
     "Option : structure claire — ex. emplacement 1=[Chat], 2=[Jardin], 3=[Matin] ; 4–5 en plus (chien, notes …). Seules les cases cochées ; ordre dans le nom : 1→5, puis résolution et note.",
 )
-row("t5.col.scene_title", "Scene title", "Szenentitel", "Título escena", "Titre scène")
+row("t5.col.scene_id", "Scene ID", "Szenen-ID", "ID de escena", "ID scène")
 row("t5.col.scene_date", "Date (CSV)", "Datum (CSV)", "Fecha (CSV)", "Date (CSV)")
 row("t5.col.scene_tags", "Stash tags", "Stash-Tags", "Etiquetas Stash", "Tags Stash")
 row("t5.col.scene_markers", "Markers", "Marker", "Marcadores", "Marqueurs")

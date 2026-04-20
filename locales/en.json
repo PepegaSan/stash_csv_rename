@@ -171,7 +171,7 @@
   "t5.ffprobe_resolution_hint": "Resolution tag: common height labels (e.g. 1080p); for uncommon heights, width×height is used.",
   "t5.tag_slot_ph": "Tag {n} — word if checked",
   "t5.tag_structure_hint": "Optional layout idea — e.g. slot 1=[Cat], 2=[Yard], 3=[Morning]; slots 4–5 for extras (Dog, notes, …). Only checked slots appear; order in the file name is slot 1→5, then resolution and rating.",
-  "t5.col.scene_title": "Scene title",
+  "t5.col.scene_id": "Scene ID",
   "t5.col.scene_date": "Date (CSV)",
   "t5.col.scene_tags": "Stash tags",
   "t5.col.scene_markers": "Markers",

@@ -171,7 +171,7 @@
   "t5.ffprobe_resolution_hint": "Auflösung: übliche Stufen wie 1080p; passt die Höhe in keine Stufe, wird Breite×Höhe verwendet.",
   "t5.tag_slot_ph": "Tag {n} — Wort wenn aktiv",
   "t5.tag_structure_hint": "Optional: klare Struktur — z. B. Slot 1=[Katze], 2=[Garten], 3=[Morgen]; Slot 4–5 für Extras (Hund, Notiz …). Nur angehakte Slots; Reihenfolge im Namen: Slot 1→5, danach Auflösung und Bewertung.",
-  "t5.col.scene_title": "Szenentitel",
+  "t5.col.scene_id": "Szenen-ID",
   "t5.col.scene_date": "Datum (CSV)",
   "t5.col.scene_tags": "Stash-Tags",
   "t5.col.scene_markers": "Marker",
