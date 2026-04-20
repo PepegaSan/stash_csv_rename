@@ -764,15 +764,6 @@ row("dlg.folder_danger", "Folder to rename (dangerous)", "Umzubenennender Ordner
 row("dlg.move_target", "Where to move files — choose folder (full path)", "Wohin verschieben — Ordner wählen (voller Pfad)", "Dónde mover archivos — elegir carpeta (ruta completa)", "Où déplacer — choisir le dossier (chemin complet)")
 row("dlg.export_t4", "Export Tab 4 CSV", "Tab-4-CSV exportieren", "Exportar CSV pestaña 4", "Exporter CSV onglet 4")
 row("dlg.choose_ps1", "Choose export_stash_files.ps1", "export_stash_files.ps1 wählen", "Elegir export_stash_files.ps1", "Choisir export_stash_files.ps1")
-row("dlg.t5_edit_title_title", "Edit scene title", "Szenentitel bearbeiten", "Editar título de escena", "Modifier le titre de scène")
-row(
-    "dlg.t5_edit_title_prompt",
-    "Scene title for selected row(s):",
-    "Szenentitel für markierte Zeile(n):",
-    "Título de escena para fila(s) seleccionada(s):",
-    "Titre de scène pour les lignes sélectionnées :",
-)
-
 # Context menu (Tab 3 tree)
 row("ctx.copy_folder_path", "Copy folder path", "Ordnerpfad kopieren", "Copiar ruta de carpeta", "Copier le chemin du dossier")
 row("ctx.copy_file_name", "Copy file name", "Dateinamen kopieren", "Copiar nombre de archivo", "Copier le nom du fichier")
@@ -805,13 +796,7 @@ row(
     "Mettre le nom (sans extension) dans Remplacer par",
 )
 row("ctx.open_in_explorer", "Open in Explorer", "Im Explorer öffnen", "Abrir en el Explorador", "Ouvrir dans l’Explorateur")
-row(
-    "ctx.t5_edit_scene_title",
-    "Edit scene title (selected)",
-    "Szenentitel bearbeiten (markiert)",
-    "Editar título de escena (seleccionadas)",
-    "Modifier le titre de scène (sélection)",
-)
+row("ctx.open_in_stash", "Open in Stash", "In Stash öffnen", "Abrir en Stash", "Ouvrir dans Stash")
 
 # --- log & dynamic (templates use {placeholders}) ---
 row("log.saved_log_to", "Saved log to {path}\n", "Protokoll gespeichert unter {path}\n", "Registro guardado en {path}\n", "Journal enregistré dans {path}\n")
@@ -1155,11 +1140,32 @@ row(
     "Tab 5 : tags cochés ajoutés sur {n} élément(s).\n",
 )
 row(
-    "log.t5_title_updated",
-    "Tab 5: scene title updated on {n} item(s).\n",
-    "Tab 5: Szenentitel bei {n} Eintrag/Einträgen aktualisiert.\n",
-    "Tab 5: título de escena actualizado en {n} elemento(s).\n",
-    "Tab 5 : titre de scène mis à jour sur {n} élément(s).\n",
+    "log.t5_open_stash",
+    "Tab 5: opened in browser: {url}\n",
+    "Tab 5: im Browser geöffnet: {url}\n",
+    "Tab 5: abierto en el navegador: {url}\n",
+    "Tab 5 : ouvert dans le navigateur : {url}\n",
+)
+row(
+    "log.t5_stash_need_scene_id",
+    "Tab 5: selected row(s) have no scene_id — set Tab 1 «Stash URL» if needed, and use a Stash CSV export so scene_id is filled.\n",
+    "Tab 5: bei der Auswahl fehlt scene_id — ggf. Stash-URL in Tab 1 prüfen; CSV aus Stash-Export nutzen, damit scene_id gefüllt ist.\n",
+    "Tab 5: la selección no tiene scene_id — revise la URL en pestaña 1 y use un CSV exportado desde Stash con scene_id.\n",
+    "Tab 5 : pas de scene_id sur la sélection — vérifiez l’URL Stash (onglet 1) et un CSV exporté depuis Stash avec scene_id.\n",
+)
+row(
+    "log.t5_open_stash_fail",
+    "Tab 5: could not open browser: {e}\n",
+    "Tab 5: Browser konnte nicht geöffnet werden: {e}\n",
+    "Tab 5: no se pudo abrir el navegador: {e}\n",
+    "Tab 5 : impossible d’ouvrir le navigateur : {e}\n",
+)
+row(
+    "log.t5_open_stash_fail_browser",
+    "Tab 5: the system returned no browser for this URL (webbrowser.open).\n",
+    "Tab 5: das System hat keinen Browser für diese URL gemeldet (webbrowser.open).\n",
+    "Tab 5: el sistema no devolvió navegador para esta URL (webbrowser.open).\n",
+    "Tab 5 : aucun navigateur pour cette URL (webbrowser.open).\n",
 )
 row(
     "log.t5_rename_need_selection",

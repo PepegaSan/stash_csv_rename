@@ -8,8 +8,10 @@ import os
 import subprocess
 import sys
 import threading
+import webbrowser
 from pathlib import Path
-from tkinter import Menu, TclError, filedialog, simpledialog, ttk
+from tkinter import Menu, TclError, filedialog, ttk
+from urllib.parse import urljoin
 
 import customtkinter as ctk
 
@@ -4202,36 +4204,45 @@ class FileToolsApp(ctk.CTk):
         menu = Menu(self, tearoff=0)
         menu.add_command(label=self._tr("ctx.copy_folder_path"), command=self._t5_copy_selected_folder_path)
         menu.add_command(label=self._tr("ctx.open_in_explorer"), command=self._t5_open_selected_in_explorer)
-        menu.add_command(label=self._tr("ctx.t5_edit_scene_title"), command=self._t5_edit_scene_title_selected)
+        menu.add_command(label=self._tr("ctx.open_in_stash"), command=self._t5_open_selected_in_stash)
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
 
-    def _t5_edit_scene_title_selected(self) -> None:
+    def _t5_stash_scene_url(self, scene_id: str) -> str:
+        """Stash web UI scene page (same host as Tab 1 «Stash URL»)."""
+        sid = (scene_id or "").strip()
+        if not sid:
+            return ""
+        base = (self._t1_url.get() or "").strip().rstrip("/") or "http://127.0.0.1:9999"
+        return urljoin(base + "/", f"scenes/{sid}")
+
+    def _t5_open_selected_in_stash(self) -> None:
         idxs = self._t5_selected_indices()
         if not idxs:
             self._log(self._tr("log.select_item"))
             return
-        first = idxs[0]
-        current = ""
-        if 0 <= first < len(self._t5_rows):
-            current = (self._t5_rows[first].get("scene_title") or "").strip()
-        entered = simpledialog.askstring(
-            self._tr("dlg.t5_edit_title_title"),
-            self._tr("dlg.t5_edit_title_prompt"),
-            initialvalue=current,
-            parent=self,
-        )
-        if entered is None:
-            return
-        new_title = entered.strip()
+        sid = ""
         for i in idxs:
             if 0 <= i < len(self._t5_rows):
-                self._t5_rows[i]["scene_title"] = new_title
-        self._log(self._tr("log.t5_title_updated", n=len(idxs)))
-        self._t5_rebuild_tree()
-        self._ttk_restore_row_selection(self._t5_tree, idxs)
+                cand = (self._t5_rows[i].get("scene_id") or "").strip()
+                if cand:
+                    sid = cand
+                    break
+        if not sid:
+            self._log(self._tr("log.t5_stash_need_scene_id"))
+            return
+        url = self._t5_stash_scene_url(sid)
+        try:
+            ok = webbrowser.open(url)
+        except Exception as e:
+            self._log(self._tr("log.t5_open_stash_fail", e=e))
+            return
+        if not ok:
+            self._log(self._tr("log.t5_open_stash_fail_browser"))
+            return
+        self._log(self._tr("log.t5_open_stash", url=url))
 
     def _t3_tree_context_menu(self, event) -> None:
         row_id = self._tree.identify_row(event.y)
