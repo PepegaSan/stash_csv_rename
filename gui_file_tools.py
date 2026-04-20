@@ -2701,20 +2701,25 @@ class FileToolsApp(ctk.CTk):
             self._t5_filter_exclude_field.get(),
             self._t5_filter_exclude_combine.get(),
         )
-        leaf, _w = self._t5_compute_leaf_for_row(row)
+        # Building visibility runs for every row — only compute the expensive proposed leaf when
+        # the filter actually references the proposed column (``proposed:`` prefix).
+        need_prop = "proposed:" in inc.lower() or "proposed:" in exc.lower()
+        leaf = ""
+        if need_prop:
+            leaf, _w = self._t5_compute_leaf_for_row(row)
         return row_passes_list_filters(
             inc,
             exc,
             file_path=row.get("file_path", ""),
             file_name=row.get("file_name", ""),
-            file_extension=leaf_extension_from_row(row),
+            file_extension=(row.get("file_extension") or "").strip() or leaf_extension_from_row(row),
             new_leaf=row.get("new_leaf", ""),
             scene_title=row.get("scene_title", ""),
             scene_tags=row.get("scene_tags", ""),
             scene_markers=row.get("scene_markers", ""),
             scene_id=row.get("scene_id", ""),
             scene_date=row.get("scene_date", ""),
-            proposed_leaf=leaf or "",
+            proposed_leaf=leaf if need_prop else "",
         )
 
     def _t5_visible_indices(self) -> list[int]:
@@ -2789,7 +2794,9 @@ class FileToolsApp(ctk.CTk):
             return self._sort_key_int_or_text(row.get("scene_id", ""))
         return self._sort_key_text(row.get("file_path", ""))
 
-    def _t5_sort_key(self, row: dict[str, str], col: str):
+    def _t5_sort_key_for_row(
+        self, row: dict[str, str], col: str, *, proposed_leaf: str | None = None
+    ) -> object:
         if col == "path":
             return self._sort_key_text(row.get("file_path", ""))
         if col == "file_name":
@@ -2803,6 +2810,8 @@ class FileToolsApp(ctk.CTk):
         if col == "scene_date":
             return self._sort_key_text(row.get("scene_date", ""))
         if col == "proposed":
+            if proposed_leaf is not None:
+                return self._sort_key_text(proposed_leaf)
             leaf, _w = self._t5_compute_leaf_for_row(row)
             return self._sort_key_text(leaf)
         return self._sort_key_text(row.get("file_path", ""))
@@ -2955,14 +2964,19 @@ class FileToolsApp(ctk.CTk):
 
     def _t5_build_visible_tree_rows(self) -> list[tuple[str, tuple[object, ...]]]:
         visible = [i for i, row in enumerate(self._t5_rows) if self._t5_row_visible(row)]
-        visible.sort(
-            key=lambda idx: self._t5_sort_key(self._t5_rows[idx], self._t5_sort_col),
-            reverse=self._t5_sort_desc,
-        )
-        rows_out: list[tuple[str, tuple[object, ...]]] = []
+        col = self._t5_sort_col
+        # One ``_t5_compute_leaf_for_row`` per visible row (sorting by "proposed" used to call it
+        # O(n log n) times via key comparisons).
+        decorated: list[tuple[object, int, str]] = []
         for i in visible:
             row = self._t5_rows[i]
             leaf, _w = self._t5_compute_leaf_for_row(row)
+            sk = self._t5_sort_key_for_row(row, col, proposed_leaf=leaf)
+            decorated.append((sk, i, leaf))
+        decorated.sort(key=lambda t: t[0], reverse=self._t5_sort_desc)
+        rows_out: list[tuple[str, tuple[object, ...]]] = []
+        for _sk, i, leaf in decorated:
+            row = self._t5_rows[i]
             rows_out.append(
                 (
                     str(i),
