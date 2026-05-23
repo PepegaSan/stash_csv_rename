@@ -4469,7 +4469,16 @@ class FileToolsApp(ctk.CTk):
         prev = self._t5_selected_indices()
         rows_out = self._t5_build_visible_tree_rows()
         self._ttk_tree_replace_rows(self._t5_tree, rows_out)
-        self._ttk_restore_row_selection(self._t5_tree, prev)
+        if len(rows_out) == 1:
+            only_iid = rows_out[0][0]
+            try:
+                self._t5_tree.selection_set(only_iid)
+                self._t5_tree.focus(only_iid)
+                self._t5_tree.see(only_iid)
+            except TclError:
+                pass
+        else:
+            self._ttk_restore_row_selection(self._t5_tree, prev)
 
     def _t5_load_csv(self) -> None:
         path = self._t5_csv.get().strip()

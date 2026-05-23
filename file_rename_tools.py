@@ -2234,6 +2234,11 @@ def rehydrate_leaf_stem_head_from_schema_row(row: dict[str, str], leaf: str) -> 
 
     Used for append-tags-only when title max is unlimited so the preview does not stay stuck
     on an older shortened ``new_leaf`` / file stem.
+
+    The title taken from the row is stripped of **its own** trailing `` [tag]`` groups first
+    (``title_head_before_trailing_bracket_tags``), then concatenated with ``tail`` from the
+    current leaf. Otherwise a ``scene_title`` like ``EX_Hyb [EX]`` plus a file already ending in
+    `` [EX] [1080p]`` would produce duplicate ``[EX]`` tokens.
     """
     warn = ""
     leaf = (leaf or "").strip()
@@ -2244,7 +2249,12 @@ def rehydrate_leaf_stem_head_from_schema_row(row: dict[str, str], leaf: str) -> 
     ext = Path(leaf).suffix
     stem = leaf[: -len(ext)] if ext else leaf
     _head, tail = split_stem_trailing_bracket_groups(stem)
-    title_short = schema_unlimited_title_head_from_row(row)
+    full_title = schema_unlimited_title_head_from_row(row)
+    title_short = title_head_before_trailing_bracket_tags(full_title).strip()
+    if not title_short:
+        title_short = full_title.strip()
+    if not title_short:
+        title_short = "video"
     new_stem = f"{title_short}{tail}".rstrip()
     out = f"{new_stem}{ext}"
     if any(c in out for c in '\\/:*?"<>|'):
